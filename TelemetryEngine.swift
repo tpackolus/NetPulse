@@ -520,17 +520,17 @@ final class TelemetryEngine {
 
     private func resolveGeoOrg(for ip: String) -> String {
         if ip.isEmpty || ip == "*" || ip.hasPrefix("127.") || ip.hasPrefix("fe80:") || ip.hasPrefix("::1") {
-            return "Lokálna slučka (macOS)"
+            return "Local Loopback (macOS)"
         }
         if ip.hasPrefix("192.168.") || ip.hasPrefix("10.") || ip.hasPrefix("172.16.") {
-            return "Lokálna sieť (LAN)"
+            return "Local Network (LAN)"
         }
         lock.lock()
         if let cached = geoCache[ip] {
             lock.unlock()
             return cached
         }
-        geoCache[ip] = "Zisťujem..."
+        geoCache[ip] = "Resolving..."
         lock.unlock()
 
         if let url = URL(string: "http://ip-api.com/json/\(ip)?fields=countryCode,org,isp") {
@@ -538,14 +538,14 @@ final class TelemetryEngine {
                 guard let self = self, let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 let cc = (json["countryCode"] as? String) ?? ""
-                let org = (json["org"] as? String) ?? (json["isp"] as? String) ?? "Externý server"
+                let org = (json["org"] as? String) ?? (json["isp"] as? String) ?? "External Host"
                 let label = cc.isEmpty ? org : "[\(cc)] \(org)"
                 self.lock.lock()
                 self.geoCache[ip] = label
                 self.lock.unlock()
             }.resume()
         }
-        return "Externý uzol"
+        return "External Node"
     }
 
     func terminateAppByName(_ appName: String) -> Bool {

@@ -298,7 +298,7 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
             let savePanel = NSSavePanel()
             savePanel.nameFieldStringValue = "netpulse_export_\(start)_\(end).\(fmt)"
             savePanel.canCreateDirectories = true
-            savePanel.title = "Exportovať dáta NetPulse"
+            savePanel.title = "Export NetPulse Telemetry Data"
             savePanel.begin { resp in
                 if resp == .OK, let targetURL = savePanel.url {
                     try? content.write(to: targetURL, atomically: true, encoding: .utf8)
@@ -318,10 +318,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var statusItem: NSStatusItem!
     var statusTimer: Timer?
 
-    let todayItem = NSMenuItem(title: "Dnes: 0 MB", action: nil, keyEquivalent: "")
-    let weekItem = NSMenuItem(title: "Týždeň: 0 MB", action: nil, keyEquivalent: "")
-    let monthItem = NSMenuItem(title: "Mesiac: 0 MB", action: nil, keyEquivalent: "")
-    let pingItem = NSMenuItem(title: "Odozva: —", action: nil, keyEquivalent: "")
+    let todayItem = NSMenuItem(title: "Today: 0 MB", action: nil, keyEquivalent: "")
+    let weekItem = NSMenuItem(title: "This Week: 0 MB", action: nil, keyEquivalent: "")
+    let monthItem = NSMenuItem(title: "This Month: 0 MB", action: nil, keyEquivalent: "")
+    let pingItem = NSMenuItem(title: "Latency: —", action: nil, keyEquivalent: "")
     let topApp1 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
     let topApp2 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
     let topApp3 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
@@ -485,16 +485,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
 
-        let openItem = NSMenuItem(title: "Otvoriť okno aplikácie", action: #selector(showMainWindow), keyEquivalent: "o")
+        let openItem = NSMenuItem(title: "Open NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
 
-        let revealDbItem = NSMenuItem(title: "Zobraziť SQLite databázu vo Finderi", action: #selector(revealDatabase), keyEquivalent: "f")
+        let revealDbItem = NSMenuItem(title: "Reveal SQLite Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         revealDbItem.target = self
         menu.addItem(revealDbItem)
 
         menu.addItem(NSMenuItem.separator())
-        let statsHeader = NSMenuItem(title: "PRENESENÉ DÁTA", action: nil, keyEquivalent: "")
+        let statsHeader = NSMenuItem(title: "DATA TRANSFERRED", action: nil, keyEquivalent: "")
         statsHeader.isEnabled = false
         menu.addItem(statsHeader)
         menu.addItem(todayItem)
@@ -503,7 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(pingItem)
 
         menu.addItem(NSMenuItem.separator())
-        let appsHeader = NSMenuItem(title: "TOP PROCESY (NAŽIVO)", action: nil, keyEquivalent: "")
+        let appsHeader = NSMenuItem(title: "TOP PROCESSES (LIVE)", action: nil, keyEquivalent: "")
         appsHeader.isEnabled = false
         menu.addItem(appsHeader)
         menu.addItem(topApp1)
@@ -511,7 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(topApp3)
 
         menu.addItem(NSMenuItem.separator())
-        let quitItem = NSMenuItem(title: "Ukončiť NetPulse", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit NetPulse", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -565,14 +565,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
 
         let s = SQLiteManager.shared.getSummaries()
-        todayItem.title = "Dnes: \(formatBytes(s.today.total))  (IN \(formatBytes(s.today.bytes_in)) / OUT \(formatBytes(s.today.bytes_out)))"
-        weekItem.title  = "Týždeň: \(formatBytes(s.this_week.total))  (IN \(formatBytes(s.this_week.bytes_in)) / OUT \(formatBytes(s.this_week.bytes_out)))"
-        monthItem.title = "Mesiac: \(formatBytes(s.this_month.total))  (IN \(formatBytes(s.this_month.bytes_in)) / OUT \(formatBytes(s.this_month.bytes_out)))"
+        todayItem.title = "Today: \(formatBytes(s.today.total))  (IN \(formatBytes(s.today.bytes_in)) / OUT \(formatBytes(s.today.bytes_out)))"
+        weekItem.title  = "This Week: \(formatBytes(s.this_week.total))  (IN \(formatBytes(s.this_week.bytes_in)) / OUT \(formatBytes(s.this_week.bytes_out)))"
+        monthItem.title = "This Month: \(formatBytes(s.this_month.total))  (IN \(formatBytes(s.this_month.bytes_in)) / OUT \(formatBytes(s.this_month.bytes_out)))"
 
         let d = engine.diagnostics
         let rPing = d.ping_router_ms >= 0 ? String(format: "%.1f ms", d.ping_router_ms) : "—"
         let iPing = d.ping_internet_ms >= 0 ? String(format: "%.1f ms", d.ping_internet_ms) : "—"
-        pingItem.title = "Latencia: Router \(rPing) | Internet \(iPing)"
+        pingItem.title = "Latency: Gateway \(rPing) | Internet \(iPing)"
 
         let apps = engine.liveApps
         let slots = [topApp1, topApp2, topApp3]
@@ -595,26 +595,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
 
-        appMenu.addItem(withTitle: "Zobraziť okno NetPulse", action: #selector(showMainWindow), keyEquivalent: "1")
-        appMenu.addItem(withTitle: "Zobraziť databázu vo Finderi", action: #selector(revealDatabase), keyEquivalent: "f")
+        appMenu.addItem(withTitle: "Show NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "1")
+        appMenu.addItem(withTitle: "Reveal Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "Skryť NetPulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Ukončiť NetPulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Hide NetPulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit NetPulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "Okno")
+        let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Skryť okno do hornej lišty", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowMenu.addItem(withTitle: "Minimalizovať", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Close Window to Menu Bar", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
 
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
-        let editMenu = NSMenu(title: "Úpravy")
+        let editMenu = NSMenu(title: "Edit")
         editMenuItem.submenu = editMenu
-        editMenu.addItem(withTitle: "Kopírovať", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Prilepiť", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Vybrať všetko", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         NSApp.mainMenu = mainMenu
     }

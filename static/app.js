@@ -1,5 +1,5 @@
 /**
- * NetPulse macOS — Native Telemetry Frontend Controller (netpulse:// scheme)
+ * NetPulse macOS — Native Telemetry Frontend Controller (English UI)
  */
 
 const state = {
@@ -7,6 +7,7 @@ const state = {
     currentPreset: 'today',
     realtimePaused: false,
     appViewMode: 'live',
+    theme: 'dark',
     realtimeData: null,
     historyData: null,
     settings: {
@@ -14,7 +15,8 @@ const state = {
         weekly_limit_gb: '0',
         monthly_limit_gb: '500',
         alert_threshold_pct: '85',
-        launch_at_login: '0'
+        launch_at_login: '0',
+        theme: 'dark'
     },
     knownInterfaces: new Set(['all'])
 };
@@ -52,8 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const todayStr = toISODate(now);
     document.getElementById('filterStartDate').value = todayStr;
     document.getElementById('filterEndDate').value = todayStr;
-    document.getElementById('todayDateLabel').textContent = now.toLocaleDateString('sk-SK', {
-        day: '2-digit', month: '2-digit', year: 'numeric'
+    document.getElementById('todayDateLabel').textContent = now.toLocaleDateString('en-US', {
+        month: 'short', day: '2-digit', year: 'numeric'
     });
 
     document.getElementById('globalInterfaceSelect').addEventListener('change', (e) => {
@@ -155,7 +157,7 @@ function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', state.theme);
     const lbl = document.getElementById('themeToggleLabel');
     if (lbl) {
-        lbl.textContent = state.theme === 'light' ? 'Tmavý režim' : 'Svetlý režim';
+        lbl.textContent = state.theme === 'light' ? 'Dark Mode' : 'Light Mode';
     }
     if (state.realtimeData && !state.realtimePaused) {
         drawRealtimeChart(state.realtimeData.realtime_history || []);
@@ -178,14 +180,13 @@ function updateRealtimeUI(data) {
     document.getElementById('peakSpeedIn').textContent = formatSpeed(data.peak_speed_in);
     document.getElementById('peakSpeedOut').textContent = formatSpeed(data.peak_speed_out);
 
-    // Diagnostics bar
     if (data.diagnostics) {
         const d = data.diagnostics;
         document.getElementById('diagProfile').textContent = d.network_profile + (d.vpn_active ? ' [VPN]' : '');
-        document.getElementById('diagLocalIP').textContent = `Lokálna IP: ${d.local_ip} (Brána: ${d.router_ip})`;
+        document.getElementById('diagLocalIP').textContent = `Local IP: ${d.local_ip} (Gateway: ${d.router_ip})`;
         document.getElementById('diagPublicIP').textContent = d.public_ip || '—';
         document.getElementById('diagISP').textContent = d.isp_org || '—';
-        document.getElementById('diagLocation').textContent = `Lokalita: ${d.country_city || '—'}`;
+        document.getElementById('diagLocation').textContent = `Location: ${d.country_city || '—'}`;
         document.getElementById('diagPingRouter').textContent = d.ping_router_ms >= 0 ? `${d.ping_router_ms.toFixed(1)} ms` : '—';
         document.getElementById('diagPingInternet').textContent = d.ping_internet_ms >= 0 ? `${d.ping_internet_ms.toFixed(1)} ms` : '—';
         document.getElementById('diagDbSize').textContent = `SQLite DB: ${d.db_size_kb} KB`;
@@ -197,7 +198,7 @@ function updateRealtimeUI(data) {
         const stBtn = document.getElementById('runSpeedtestBtn');
         const stVal = document.getElementById('diagSpeedtestVal');
         if (d.speedtest_running) {
-            stVal.textContent = 'Prebieha test...';
+            stVal.textContent = 'Running benchmark...';
             stBtn.disabled = true;
         } else {
             stBtn.disabled = false;
@@ -274,7 +275,7 @@ function updateLimitBars(summaries) {
         if (pct >= 100) fill.classList.add('danger');
         else if (pct >= warnPct) fill.classList.add('warn');
 
-        document.getElementById(textId).textContent = `${((usedBytes / limitBytes) * 100).toFixed(1)}% z kvóty ${limitGb} GB`;
+        document.getElementById(textId).textContent = `${((usedBytes / limitBytes) * 100).toFixed(1)}% of ${limitGb} GB quota`;
     };
 
     applyBar('limitWrapDaily', 'limitFillDaily', 'limitTextDaily', summaries.today.total, dailyGb);
@@ -296,7 +297,7 @@ function updateHistoryUI(data) {
     if (t.peak && t.peak.total > 0) {
         document.getElementById('rangePeakValue').textContent = `${formatBytes(t.peak.total)} (${t.peak.label})`;
     } else {
-        document.getElementById('rangePeakValue').textContent = 'Žiadne dáta v období';
+        document.getElementById('rangePeakValue').textContent = 'No traffic in period';
     }
 
     drawHistoryChart('historyCanvas', data.timeline || []);
@@ -336,7 +337,7 @@ function applyCustomFilter() {
 function toggleRealtimePause() {
     state.realtimePaused = !state.realtimePaused;
     const btn = document.getElementById('pauseRealtimeBtn');
-    btn.textContent = state.realtimePaused ? 'Pokračovať' : 'Pozastaviť';
+    btn.textContent = state.realtimePaused ? 'Resume' : 'Pause';
     btn.classList.toggle('active', state.realtimePaused);
 }
 
@@ -344,7 +345,7 @@ function setAppViewMode(mode) {
     state.appViewMode = mode;
     document.getElementById('appModeLiveBtn').classList.toggle('active', mode === 'live');
     document.getElementById('appModeHistBtn').classList.toggle('active', mode === 'history');
-    document.getElementById('appColSpeed').textContent = mode === 'live' ? 'Rýchlosť' : 'Podiel';
+    document.getElementById('appColSpeed').textContent = mode === 'live' ? 'Rate' : 'Share';
     renderAppTable();
 }
 
@@ -353,7 +354,7 @@ function renderTimelineTable(timeline, grandTotal) {
     document.getElementById('timelineRowCount').textContent = timeline.length;
 
     if (!timeline.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">Žiadne záznamy pre toto obdobie</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No records for selected interval</td></tr>`;
         return;
     }
 
@@ -406,7 +407,7 @@ function renderAppTable() {
     }
 
     if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#71717a;">Žiadne zodpovedajúce procesy</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#71717a;">No matching processes</td></tr>`;
         return;
     }
 
@@ -437,7 +438,7 @@ function renderAppTable() {
                 <td class="num-col up-text">${formatBytes(r.bytes_out)}</td>
                 <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(r.total)}</strong></td>
                 <td class="num-col">
-                    <button class="btn btn-ghost btn-xs" onclick="openAppInspector('${safeName}')">Detail</button>
+                    <button class="btn btn-ghost btn-xs" onclick="openAppInspector('${safeName}')">Inspect</button>
                 </td>
             </tr>
         `;
@@ -447,7 +448,7 @@ function renderAppTable() {
 function renderInterfacesList(interfaces) {
     const container = document.getElementById('interfacesList');
     if (!interfaces.length) {
-        container.innerHTML = `<div style="color:#71717a;font-size:0.8rem;">Žiadne aktívne sieťové rozhrania</div>`;
+        container.innerHTML = `<div style="color:#71717a;font-size:0.8rem;">No active network interfaces</div>`;
         return;
     }
 
@@ -461,7 +462,7 @@ function renderInterfacesList(interfaces) {
                         <span>${escapeHtml(item.label)}</span>
                     </div>
                     <div class="iface-meta">
-                        Celkovo od štartu: <strong>${formatBytes(item.boot_total)}</strong>
+                        Since boot: <strong>${formatBytes(item.boot_total)}</strong>
                         (IN ${formatBytes(item.boot_bytes_in)} / OUT ${formatBytes(item.boot_bytes_out)})
                     </div>
                 </div>
@@ -477,7 +478,7 @@ function renderInterfacesList(interfaces) {
 function renderConnectionsTable(connections) {
     const tbody = document.getElementById('connectionsTableBody');
     if (!connections.length) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">Žiadne aktívne spojenia</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">No active connections</td></tr>`;
         return;
     }
 
@@ -493,7 +494,7 @@ function renderConnectionsTable(connections) {
 
 // --- App Inspector Modal ---
 async function openAppInspector(appName) {
-    document.getElementById('inspectorAppTitle').textContent = `Profil aplikácie: ${appName}`;
+    document.getElementById('inspectorAppTitle').textContent = `Process Profile: ${appName}`;
     document.getElementById('appDetailModal').classList.remove('hidden');
 
     const killBtn = document.getElementById('inspectorKillBtn');
@@ -511,7 +512,7 @@ async function openAppInspector(appName) {
         const tbody = document.getElementById('inspectorConnBody');
         const conns = data.connections || [];
         if (!conns.length) {
-            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">Žiadne otvorené sokety pre tento proces</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">No open sockets for this process</td></tr>`;
         } else {
             tbody.innerHTML = conns.map(c => `
                 <tr>
@@ -620,7 +621,6 @@ function drawRealtimeChart(history) {
     drawSeries('speed_in', '#10b981', 'rgba(16, 185, 129, 0.20)');
     drawSeries('speed_out', '#3b82f6', 'rgba(59, 130, 246, 0.18)');
 
-    // Non-overlapping X-axis time labels (guarantee at least 85px between labels)
     ctx.fillStyle = isLight ? '#475569' : '#71717a';
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
@@ -634,8 +634,6 @@ function drawRealtimeChart(history) {
         if (x - lastDrawnX >= minLabelGap) {
             ctx.fillText(points[i].time_str, x, h - 6);
             lastDrawnX = x;
-        } else if (isLast && lastDrawnX > 0) {
-            // Ensure the right-most live timestamp is always visible
         }
     }
 }
@@ -665,7 +663,7 @@ function drawHistoryChart(canvasId, timeline) {
         ctx.fillStyle = isLight ? '#475569' : '#71717a';
         ctx.font = '12px Inter, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('Žiadne zaznamenané dáta pre zvolený interval', w / 2, h / 2);
+        ctx.fillText('No recorded data for the selected interval', w / 2, h / 2);
         return;
     }
 
@@ -767,7 +765,8 @@ function saveSettings() {
         weekly_limit_gb: document.getElementById('inputWeeklyLimit').value || '0',
         monthly_limit_gb: document.getElementById('inputMonthlyLimit').value || '0',
         alert_threshold_pct: document.getElementById('inputAlertPct').value || '85',
-        launch_at_login: document.getElementById('inputLaunchAtLogin').checked ? '1' : '0'
+        launch_at_login: document.getElementById('inputLaunchAtLogin').checked ? '1' : '0',
+        theme: state.theme || 'dark'
     };
     state.settings = newSettings;
     postNativeAction({
