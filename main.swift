@@ -353,6 +353,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         updateStatusBar()
 
         NSApp.activate(ignoringOtherApps: true)
+
+        if CommandLine.arguments.contains("--capture-screenshots") {
+            captureRealScreenshots()
+        }
+    }
+
+    private func saveSnapshotImage(_ image: NSImage, to path: String) {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
+    }
+
+    private func captureRealScreenshots() {
+        let docsDir = "/Users/marosharahus/Downloads/appka/docs"
+        try? FileManager.default.createDirectory(atPath: docsDir, withIntermediateDirectories: true)
+
+        // Expand window & webView so the entire dashboard from topbar to bottom tables renders in one full view
+        let fullW: CGFloat = 1440
+        let fullH: CGFloat = 2120
+        let fullRect = NSRect(x: 20, y: 20, width: fullW, height: fullH)
+        mainWindow.setFrame(fullRect, display: true)
+        webView.frame = NSRect(x: 0, y: 0, width: fullW, height: fullH)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
+            let prepJS = """
+            const snapStyle = document.createElement('style');
+            snapStyle.textContent = `
+                .realtime-frame { height: 215px !important; }
+                .history-frame { height: 245px !important; }
+                .app-table-height { max-height: 420px !important; }
+                .conn-table-height { max-height: 220px !important; }
+                .iface-stack { max-height: 210px !important; }
+            `;
+            document.head.appendChild(snapStyle);
+            applyTheme('dark');
+            setAppViewMode('history');
+            fetchRealtime();
+            fetchHistory();
+            fetchConnections();
+            """
+            self.applyWindowTheme("dark")
+            self.webView.evaluateJavaScript(prepJS) { _, _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    let cfg = WKSnapshotConfiguration()
+                    cfg.rect = NSRect(x: 0, y: 0, width: fullW, height: fullH)
+                    self.webView.takeSnapshot(with: cfg) { img, _ in
+                        if let img = img {
+                            self.saveSnapshotImage(img, to: "\(docsDir)/netpulse-dark.png")
+                        }
+                        // Switch to Light Mode and capture full Light Mode screenshot
+                        self.applyWindowTheme("light")
+                        self.webView.evaluateJavaScript("applyTheme('light'); renderRealtimeChart(); renderHistoryChart(); renderAppTable();") { _, _ in
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                self.webView.takeSnapshot(with: cfg) { imgLight, _ in
+                                    if let imgLight = imgLight {
+                                        self.saveSnapshotImage(imgLight, to: "\(docsDir)/netpulse-light.png")
+                                    }
+                                    // Capture Process Inspector Modal in 1440x920 viewport
+                                    let modalRect = NSRect(x: 40, y: 40, width: 1440, height: 920)
+                                    self.mainWindow.setFrame(modalRect, display: true)
+                                    self.webView.frame = NSRect(x: 0, y: 0, width: 1440, height: 920)
+                                    self.applyWindowTheme("dark")
+                                    let openModalJS = """
+                                    applyTheme('dark');
+                                    window.scrollTo(0, 0);
+                                    if (state.historyApps && state.historyApps.length > 0) {
+                                        openAppInspector(state.historyApps[0].app_name);
+                                    } else if (state.liveApps && state.liveApps.length > 0) {
+                                        openAppInspector(state.liveApps[0].app_name);
+                                    } else {
+                                        openLimitsModal();
+                                    }
+                                    """
+                                    self.webView.evaluateJavaScript(openModalJS) { _, _ in
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                            let modalCfg = WKSnapshotConfiguration()
+                                            modalCfg.rect = NSRect(x: 0, y: 0, width: 1440, height: 920)
+                                            self.webView.takeSnapshot(with: modalCfg) { imgModal, _ in
+                                                if let imgModal = imgModal {
+                                                    self.saveSnapshotImage(imgModal, to: "\(docsDir)/netpulse-inspector.png")
+                                                }
+                                                SQLiteManager.shared.updateSettings(["theme": "dark"])
+                                                NSApplication.shared.terminate(nil)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     func applyWindowTheme(_ theme: String) {
@@ -387,12 +481,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         mainWindow.appearance = NSAppearance(named: .darkAqua)
         mainWindow.backgroundColor = NSColor(calibratedRed: 0.035, green: 0.035, blue: 0.043, alpha: 1.0)
         mainWindow.minSize = NSSize(width: 720, height: 520)
-        mainWindow.setFrameAutosaveName("NetPulseMainWindowFrame")
+        if !CommandLine.arguments.contains("--capture-screenshots") {
+            mainWindow.setFrameAutosaveName("NetPulseMainWindowFrame")
+        }
         mainWindow.delegate = self
         mainWindow.isReleasedWhenClosed = false
 
         // Clamp window to visible screen if saved frame was from a larger disconnected external monitor
-        fitWindowToCurrentScreenIfNeeded()
+        if !CommandLine.arguments.contains("--capture-screenshots") {
+            fitWindowToCurrentScreenIfNeeded()
+        }
 
         NotificationCenter.default.addObserver(
             self,

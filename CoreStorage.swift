@@ -100,20 +100,23 @@ final class SQLiteManager {
         self.legacyDbPath = localDb
 
         let targetDb = folder.appendingPathComponent("netpulse_data.db").path
-        // Copy local DB on first run if present alongside the app
         if !FileManager.default.fileExists(atPath: targetDb) && FileManager.default.fileExists(atPath: localDb) {
             try? FileManager.default.copyItem(atPath: localDb, toPath: targetDb)
         }
-        self.dbPath = targetDb
-        openDatabase()
-        initTables()
-    }
 
-    private func openDatabase() {
-        if sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
-            execSQL("PRAGMA journal_mode=WAL;")
-            execSQL("PRAGMA synchronous=NORMAL;")
+        var testDb: OpaquePointer?
+        if sqlite3_open_v2(targetDb, &testDb, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+            self.dbPath = targetDb
+            self.db = testDb
+        } else {
+            if let testDb = testDb { sqlite3_close(testDb) }
+            self.dbPath = localDb
+            sqlite3_open_v2(localDb, &self.db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
         }
+
+        execSQL("PRAGMA journal_mode=WAL;")
+        execSQL("PRAGMA synchronous=NORMAL;")
+        initTables()
     }
 
     private func execSQL(_ sql: String) {
@@ -183,14 +186,29 @@ final class SQLiteManager {
             sqlite3_finalize(stmt)
         }
 
-        // Also keep a synchronized copy in /Users/marosharahus/Downloads/appka/netpulse_data.db so user can see it in both places
         syncToWorkspaceIfPossible()
     }
 
     func syncToWorkspaceIfPossible() {
-        let workspaceDir = "/Users/marosharahus/Downloads/appka"
-        if FileManager.default.fileExists(atPath: workspaceDir) && dbPath != legacyDbPath {
-            // Create symlink or copy periodically if needed
+        if dbPath != legacyDbPath && FileManager.default.fileExists(atPath: legacyDbPath) {
+            execSQL("ATTACH DATABASE '\(legacyDbPath)' AS legacy_db;")
+            execSQL("""
+                INSERT INTO interface_traffic (date, hour, interface, bytes_in, bytes_out, packets_in, packets_out)
+                SELECT date, hour, interface, bytes_in, bytes_out, packets_in, packets_out FROM legacy_db.interface_traffic
+                WHERE true
+                ON CONFLICT(date, hour, interface) DO UPDATE SET
+                    bytes_in = MAX(interface_traffic.bytes_in, excluded.bytes_in),
+                    bytes_out = MAX(interface_traffic.bytes_out, excluded.bytes_out);
+            """)
+            execSQL("""
+                INSERT INTO app_traffic (date, hour, app_name, bytes_in, bytes_out)
+                SELECT date, hour, app_name, bytes_in, bytes_out FROM legacy_db.app_traffic
+                WHERE true
+                ON CONFLICT(date, hour, app_name) DO UPDATE SET
+                    bytes_in = MAX(app_traffic.bytes_in, excluded.bytes_in),
+                    bytes_out = MAX(app_traffic.bytes_out, excluded.bytes_out);
+            """)
+            execSQL("DETACH DATABASE legacy_db;")
         }
     }
 

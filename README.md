@@ -1,17 +1,21 @@
 # NetPulse — Native macOS Network Telemetry & Bandwidth Analyzer
 
 <p align="center">
-  <img src="docs/netpulse-dark-preview.svg" alt="NetPulse Dark Mode Dashboard" width="100%">
+  <img src="docs/netpulse-dark.png" alt="NetPulse Dark Mode Dashboard" width="100%">
 </p>
 
 **NetPulse** is a standalone, native macOS network telemetry and bandwidth analysis application written in **Swift** (`Cocoa`, `WebKit`, `SQLite3`, and BSD `getifaddrs()`). It operates with **zero external web servers, zero Python/Node runtimes, and ultra-low battery consumption**, combining a compact real-time macOS Menu Bar monitor with an enterprise-grade analytical dashboard.
 
 ---
 
-## Visual Preview — Light Theme, Menu Bar Widget & Process Inspector
+## Light Mode & System Configuration
 
 <p align="center">
-  <img src="docs/netpulse-light-preview.svg" alt="NetPulse Light Mode & Process Inspector" width="100%">
+  <img src="docs/netpulse-light.png" alt="NetPulse Light Mode Dashboard" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/netpulse-inspector.png" alt="NetPulse Quotas, System & Storage Settings" width="100%">
 </p>
 
 ---
@@ -48,9 +52,9 @@ cd NetPulse
   - Complete 24-hour bar chart for any single day (`00:00` to `23:00`), daily breakdown for weeks/months, and 12-month breakdown for yearly views, alongside a 120-second real-time stream.
 - **Per-Application Bandwidth Breakdown & Process Inspector**
   - Tracks exact download and upload volume per macOS application/process (`nettop`).
-  - Click any application row to inspect its 24-hour usage profile, view active remote TCP/UDP sockets (`lsof`) with IP geolocation/organization lookup, or terminate (`SIGTERM`) a process with one click.
+  - Click any application row (`Inspect`) to view its 24-hour usage profile, inspect active remote TCP/UDP sockets (`lsof`) with IP geolocation/organization lookup, or terminate (`SIGTERM`) a process with one click.
 - **Dark Mode & Light Mode + Adaptive Monitor Scaling**
-  - Instant switch between **Dark** and **Light** themes (synchronizing both the dashboard and native `NSWindow` appearance).
+  - Instant switch between **Dark Mode** and **Light Mode** (synchronizing both the dashboard and native `NSWindow` appearance).
   - Fluidly scales across 13" MacBook screens, 16" Retina displays, and 4K/5K external monitors (`ResizeObserver` + `NSApplication.didChangeScreenParametersNotification`).
 - **Network Diagnostics & Built-in Speedtest**
   - Displays Wi-Fi SSID / network profile, local IPv4, default gateway IP, public IP & ISP, gateway ping, internet ping (`1.1.1.1`), VPN tunnel status (`utun`), and an integrated Cloudflare HTTPS throughput speedtest.
@@ -77,7 +81,7 @@ All historical traffic metrics and user settings are stored locally in a native 
 ~/Library/Application Support/NetPulse/netpulse_data.db
 ```
 
-- You can open its exact location in Finder at any time by clicking the database path in the top Diagnostics Bar or selecting **Reveal SQLite Database in Finder** (`Cmd + F`) from the Menu Bar icon.
+- You can open its exact location in Finder at any time by clicking **Database** in the top bar or selecting **Reveal SQLite Database in Finder** (`Cmd + F`) from the Menu Bar icon.
 - Data persists across application restarts and macOS reboots.
 
 ---
@@ -122,8 +126,9 @@ NetPulse/
 │   ├── styles.css               # Dark & Light theme design system + responsive monitor scaling
 │   └── app.js                   # High-DPI Canvas charts, Process Inspector & native bridge
 ├── docs/
-│   ├── netpulse-dark-preview.svg   # Vector screenshot — Dark Mode dashboard
-│   └── netpulse-light-preview.svg  # Vector screenshot — Light Mode & Process Inspector
+│   ├── netpulse-dark.png        # Real screenshot — Full Dark Mode dashboard
+│   ├── netpulse-light.png       # Real screenshot — Full Light Mode dashboard
+│   └── netpulse-inspector.png   # Real screenshot — Quotas, System & Storage modal
 ├── NetPulse.app/                # Standalone Universal macOS Application Bundle
 ├── Install_NetPulse.command     # One-click macOS Universal installer script
 └── NetPulse-Mac-Installer.zip   # Ready-to-share Universal macOS installer archive

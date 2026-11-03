@@ -990,6 +990,11 @@ canvas {
     gap: 10px;
 }
 
+.diag-item-action > div {
+    display: flex;
+    flex-direction: column;
+}
+
 .diag-label {
     font-size: 0.63rem;
     font-weight: 600;
