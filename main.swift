@@ -317,6 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var webView: WKWebView!
     var statusItem: NSStatusItem!
     var statusTimer: Timer?
+    var allowFullTermination = false
 
     let todayItem = NSMenuItem(title: "Today: 0 MB", action: nil, keyEquivalent: "")
     let weekItem = NSMenuItem(title: "This Week: 0 MB", action: nil, keyEquivalent: "")
@@ -339,22 +340,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        let startInBackground = CommandLine.arguments.contains("--background")
+        NSApp.setActivationPolicy(startInBackground ? .accessory : .regular)
+        TelemetryEngine.shared.isMainWindowVisible = !startInBackground
         TelemetryEngine.shared.start()
+
+        let settings = SQLiteManager.shared.getSettings()
+        if (settings["launch_at_login"] ?? "1") == "1" {
+            TelemetryEngine.shared.setLaunchAtLogin(enabled: true, appBundlePath: Bundle.main.bundlePath)
+        }
 
         setupMainMenu()
         setupStatusBar()
         setupMainWindow()
 
-        let savedTheme = SQLiteManager.shared.getSettings()["theme"] ?? "dark"
+        let savedTheme = settings["theme"] ?? "dark"
         applyWindowTheme(savedTheme)
+
+        if startInBackground {
+            mainWindow.orderOut(nil)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
 
         statusTimer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(updateStatusBar), userInfo: nil, repeats: true)
         updateStatusBar()
 
-        NSApp.activate(ignoringOtherApps: true)
-
         if CommandLine.arguments.contains("--capture-screenshots") {
+            allowFullTermination = true
             captureRealScreenshots()
         }
     }
@@ -560,13 +573,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        TelemetryEngine.shared.isMainWindowVisible = false
-        sender.orderOut(nil)
+        minimizeToBackground()
         return false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if allowFullTermination {
+            return .terminateNow
+        }
+        // Pressing Cmd+Q or clicking Quit from Dock closes the window & Dock icon,
+        // while keeping the Menu Bar monitor and SQLite telemetry collector running in the background.
+        minimizeToBackground()
+        return .terminateCancel
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showMainWindow() }
+        showMainWindow()
         return true
     }
 
@@ -578,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
 
         let menu = NSMenu()
-        let headerItem = NSMenuItem(title: "NetPulse Telemetry", action: nil, keyEquivalent: "")
+        let headerItem = NSMenuItem(title: "NetPulse Telemetry (Background Active)", action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
@@ -586,6 +608,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let openItem = NSMenuItem(title: "Open NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
+
+        let hideBgItem = NSMenuItem(title: "Close Window to Background", action: #selector(minimizeToBackground), keyEquivalent: "w")
+        hideBgItem.target = self
+        menu.addItem(hideBgItem)
 
         let revealDbItem = NSMenuItem(title: "Reveal SQLite Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         revealDbItem.target = self
@@ -609,7 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(topApp3)
 
         menu.addItem(NSMenuItem.separator())
-        let quitItem = NSMenuItem(title: "Quit NetPulse", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Stop Background Collector & Exit", action: #selector(stopBackgroundAndExit), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -697,13 +723,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         appMenu.addItem(withTitle: "Reveal Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide NetPulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit NetPulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Close to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "q")
 
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Close Window to Menu Bar", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Close Window to Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
 
         let editMenuItem = NSMenuItem()
@@ -718,9 +744,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     @objc func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
         TelemetryEngine.shared.isMainWindowVisible = true
         mainWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func minimizeToBackground() {
+        TelemetryEngine.shared.isMainWindowVisible = false
+        mainWindow?.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
     }
 
     @objc func revealDatabase() {
@@ -728,7 +761,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSWorkspace.shared.activateFileViewerSelecting([dbURL])
     }
 
-    @objc func quitApp() {
+    @objc func stopBackgroundAndExit() {
+        allowFullTermination = true
         NSApplication.shared.terminate(nil)
     }
 }

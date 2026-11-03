@@ -173,7 +173,7 @@ final class SQLiteManager {
             "weekly_limit_gb": "0",
             "monthly_limit_gb": "500",
             "alert_threshold_pct": "85",
-            "launch_at_login": "0"
+            "launch_at_login": "1"
         ]
         for (k, v) in defaults {
             var stmt: OpaquePointer?
