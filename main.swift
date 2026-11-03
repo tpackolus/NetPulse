@@ -356,7 +356,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         return (appDir as NSString).appendingPathComponent("static")
     }
 
+    private func terminateOtherInstances() {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        for app in NSWorkspace.shared.runningApplications {
+            let pid = app.processIdentifier
+            if pid != myPID {
+                if app.bundleIdentifier == "com.maros.netpulse" || app.localizedName == "NetPulse" || (app.executableURL?.lastPathComponent == "NetPulse") {
+                    kill(pid, SIGKILL)
+                }
+            }
+        }
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        task.arguments = ["-f", "NetPulse.app/Contents/MacOS/NetPulse"]
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let out = String(data: data, encoding: .utf8) {
+                for line in out.split(whereSeparator: \.isNewline) {
+                    if let pid = Int32(line.trimmingCharacters(in: .whitespaces)), pid != myPID {
+                        kill(pid, SIGKILL)
+                    }
+                }
+            }
+        } catch {}
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOtherInstances()
+
         let startInBackground = CommandLine.arguments.contains("--background")
         NSApp.setActivationPolicy(startInBackground ? .accessory : .regular)
         TelemetryEngine.shared.isMainWindowVisible = !startInBackground
@@ -598,10 +630,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         if allowFullTermination {
             return .terminateNow
         }
-        // Pressing Cmd+Q or clicking Quit from Dock closes the window & Dock icon,
-        // while keeping the Menu Bar monitor and SQLite telemetry collector running in the background.
-        minimizeToBackground()
-        return .terminateCancel
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Quit NetPulse or Keep Running in Background?"
+        alert.informativeText = "If you keep NetPulse running in the background, the window and Dock icon will be hidden while live telemetry continues in the top Menu Bar."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Quit Completely")
+        alert.addButton(withTitle: "Run in Background (Menu Bar)")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            allowFullTermination = true
+            return .terminateNow
+        } else if response == .alertSecondButtonReturn {
+            minimizeToBackground()
+            return .terminateCancel
+        } else {
+            return .terminateCancel
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -626,7 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         openItem.target = self
         menu.addItem(openItem)
 
-        let hideBgItem = NSMenuItem(title: "Close Window to Background", action: #selector(minimizeToBackground), keyEquivalent: "w")
+        let hideBgItem = NSMenuItem(title: "Hide Window (Keep Running in Background)", action: #selector(minimizeToBackground), keyEquivalent: "w")
         hideBgItem.target = self
         menu.addItem(hideBgItem)
 
@@ -656,7 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(topApp3)
 
         menu.addItem(NSMenuItem.separator())
-        let quitItem = NSMenuItem(title: "Stop Background Collector & Exit", action: #selector(stopBackgroundAndExit), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "Quit NetPulse Completely", action: #selector(stopBackgroundAndExit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -754,14 +801,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         appMenu.addItem(withTitle: "Check for Updates...", action: #selector(handleMenuBarUpdateClick), keyEquivalent: "u")
         appMenu.addItem(withTitle: "Reveal Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Hide Window to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
         appMenu.addItem(withTitle: "Hide NetPulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Close to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "q")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Quit NetPulse...", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Close Window to Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Close Window to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
 
         let editMenuItem = NSMenuItem()

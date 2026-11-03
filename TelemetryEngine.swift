@@ -562,7 +562,7 @@ final class TelemetryEngine {
         return true
     }
 
-    // MARK: - Launch at Login (macOS LaunchAgent with KeepAlive)
+    // MARK: - Launch at Login (macOS LaunchAgent)
     func setLaunchAtLogin(enabled: Bool, appBundlePath: String) {
         let launchAgentsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
@@ -581,15 +581,9 @@ final class TelemetryEngine {
                 <key>ProgramArguments</key>
                 <array>
                     <string>\(execPath)</string>
-                    <string>--background</string>
                 </array>
                 <key>RunAtLoad</key>
                 <true/>
-                <key>KeepAlive</key>
-                <dict>
-                    <key>SuccessfulExit</key>
-                    <false/>
-                </dict>
             </dict>
             </plist>
             """
