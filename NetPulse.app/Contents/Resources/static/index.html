@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetPulse — macOS Network Telemetry</title>
+    <link rel="stylesheet" href="netpulse://app/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Top Header -->
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand-group">
+                <div class="brand-mark">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                    </svg>
+                </div>
+                <div class="brand-meta">
+                    <div class="brand-row">
+                        <span class="brand-name">NetPulse</span>
+                        <span class="brand-tag">Native macOS Engine</span>
+                        <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
+                    </div>
+                    <p class="brand-sub" id="statusSubtitle">Samostatná macOS aplikácia bez webového servera</p>
+                </div>
+            </div>
+
+            <div class="telemetry-strip">
+                <div class="telemetry-metric">
+                    <div class="metric-label">
+                        <span class="dot-indicator down-bg"></span>
+                        <span>INGRESS / DOWNLOAD</span>
+                    </div>
+                    <div class="metric-val" id="headerSpeedIn">0 B/s</div>
+                </div>
+                <div class="telemetry-divider"></div>
+                <div class="telemetry-metric">
+                    <div class="metric-label">
+                        <span class="dot-indicator up-bg"></span>
+                        <span>EGRESS / UPLOAD</span>
+                    </div>
+                    <div class="metric-val" id="headerSpeedOut">0 B/s</div>
+                </div>
+            </div>
+
+            <div class="topbar-actions">
+                <div class="select-wrapper">
+                    <span class="select-prefix">Rozhranie</span>
+                    <select id="globalInterfaceSelect" class="select-control">
+                        <option value="all">Všetky externé adaptéry</option>
+                    </select>
+                </div>
+                <button class="btn btn-ghost" id="themeToggleBtn" onclick="toggleTheme()" title="Prepnúť svetlý / tmavý režim">
+                    <span id="themeToggleLabel">Svetlý režim</span>
+                </button>
+                <button class="btn btn-ghost" onclick="revealDatabase()" title="Otvoriť umiestnenie SQLite databázy vo Finderi">
+                    <span>Databáza</span>
+                </button>
+                <button class="btn btn-secondary" id="openLimitsModalBtn">
+                    <span>Kvóty a systém</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="workspace">
+        <!-- Network Diagnostics, Ping & Storage Bar -->
+        <section class="diag-strip">
+            <div class="diag-item">
+                <span class="diag-label">SIEŤ / PROFIL</span>
+                <span class="diag-value" id="diagProfile">Wi-Fi (en0)</span>
+                <span class="diag-sub" id="diagLocalIP">Lokálna IP: —</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">VEREJNÁ IP A POSKYTOVATEĽ</span>
+                <span class="diag-value" id="diagPublicIP">Zisťujem...</span>
+                <span class="diag-sub" id="diagISP">—</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">LATENCIA (ODOZVA SIETE)</span>
+                <div class="ping-row">
+                    <span>Router: <strong id="diagPingRouter">—</strong></span>
+                    <span class="ping-sep">|</span>
+                    <span>Internet (1.1.1.1): <strong id="diagPingInternet">—</strong></span>
+                </div>
+                <span class="diag-sub" id="diagLocation">Lokalita: —</span>
+            </div>
+            <div class="diag-item diag-item-action">
+                <div>
+                    <span class="diag-label">RÝCHLOSTNÝ TEST &amp; ÚLOŽISKO</span>
+                    <span class="diag-value" id="diagSpeedtestVal">Meranie linky</span>
+                    <span class="diag-sub" id="diagDbSize">SQLite DB: — KB</span>
+                </div>
+                <button class="btn btn-ghost btn-xs" id="runSpeedtestBtn" onclick="triggerSpeedtest()">Spustiť Speedtest</button>
+            </div>
+        </section>
+
+        <!-- KPI Summary Grid -->
+        <section class="kpi-grid">
+            <div class="kpi-card active-period" data-preset="today" onclick="selectPreset('today')">
+                <div class="kpi-card-top">
+                    <span class="kpi-period">DNES</span>
+                    <span class="kpi-meta" id="todayDateLabel">—</span>
+                </div>
+                <div class="kpi-primary" id="sumTodayTotal">0.00 MB</div>
+                <div class="kpi-breakdown">
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
+                        <span class="flow-val" id="sumTodayIn">0 MB</span>
+                    </div>
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
+                        <span class="flow-val" id="sumTodayOut">0 MB</span>
+                    </div>
+                </div>
+                <div class="quota-progress hidden" id="limitWrapDaily">
+                    <div class="quota-track"><div class="quota-fill" id="limitFillDaily"></div></div>
+                    <span class="quota-label" id="limitTextDaily"></span>
+                </div>
+            </div>
+
+            <div class="kpi-card" data-preset="this_week" onclick="selectPreset('this_week')">
+                <div class="kpi-card-top">
+                    <span class="kpi-period">TENTO TÝŽDEŇ</span>
+                    <span class="kpi-meta">7d: <strong id="sum7dTotal">0 MB</strong></span>
+                </div>
+                <div class="kpi-primary" id="sumWeekTotal">0.00 MB</div>
+                <div class="kpi-breakdown">
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
+                        <span class="flow-val" id="sumWeekIn">0 MB</span>
+                    </div>
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
+                        <span class="flow-val" id="sumWeekOut">0 MB</span>
+                    </div>
+                </div>
+                <div class="quota-progress hidden" id="limitWrapWeekly">
+                    <div class="quota-track"><div class="quota-fill" id="limitFillWeekly"></div></div>
+                    <span class="quota-label" id="limitTextWeekly"></span>
+                </div>
+            </div>
+
+            <div class="kpi-card" data-preset="this_month" onclick="selectPreset('this_month')">
+                <div class="kpi-card-top">
+                    <span class="kpi-period">TENTO MESIAC</span>
+                    <span class="kpi-meta">30d: <strong id="sum30dTotal">0 MB</strong></span>
+                </div>
+                <div class="kpi-primary" id="sumMonthTotal">0.00 GB</div>
+                <div class="kpi-breakdown">
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
+                        <span class="flow-val" id="sumMonthIn">0 MB</span>
+                    </div>
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
+                        <span class="flow-val" id="sumMonthOut">0 MB</span>
+                    </div>
+                </div>
+                <div class="quota-progress hidden" id="limitWrapMonthly">
+                    <div class="quota-track"><div class="quota-fill" id="limitFillMonthly"></div></div>
+                    <span class="quota-label" id="limitTextMonthly"></span>
+                </div>
+            </div>
+
+            <div class="kpi-card" data-preset="this_year" onclick="selectPreset('this_year')">
+                <div class="kpi-card-top">
+                    <span class="kpi-period">ROK / CELKOVO</span>
+                    <span class="kpi-meta">Včera: <strong id="sumYesterdayTotal">0 MB</strong></span>
+                </div>
+                <div class="kpi-primary" id="sumYearTotal">0.00 GB</div>
+                <div class="kpi-breakdown">
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
+                        <span class="flow-val" id="sumYearIn">0 MB</span>
+                    </div>
+                    <div class="kpi-flow">
+                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
+                        <span class="flow-val" id="sumYearOut">0 MB</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Real-Time Telemetry Stream -->
+        <section class="surface-panel">
+            <div class="panel-head">
+                <div class="panel-titles">
+                    <h2 class="section-title">Prenosová rýchlosť v reálnom čase</h2>
+                    <p class="section-subtitle">Kontinuálny 120-sekundový interval so sekundovým vzorkovaním</p>
+                </div>
+                <div class="panel-controls">
+                    <div class="metric-chip">
+                        <span class="chip-label">Špička IN</span>
+                        <span class="chip-val down-text" id="peakSpeedIn">0 B/s</span>
+                    </div>
+                    <div class="metric-chip">
+                        <span class="chip-label">Špička OUT</span>
+                        <span class="chip-val up-text" id="peakSpeedOut">0 B/s</span>
+                    </div>
+                    <button class="btn btn-ghost" id="pauseRealtimeBtn" onclick="toggleRealtimePause()">Pozastaviť</button>
+                </div>
+            </div>
+            <div class="chart-frame realtime-frame">
+                <canvas id="realtimeCanvas"></canvas>
+            </div>
+        </section>
+
+        <!-- Historical Analytics & Custom Date Filter -->
+        <section class="surface-panel" id="historySection">
+            <div class="panel-head">
+                <div class="panel-titles">
+                    <h2 class="section-title">História prevádzky a analytické filtre</h2>
+                    <p class="section-subtitle">Agregácia prenesených dát podľa hodín, dní, mesiacov alebo vlastného časového intervalu</p>
+                </div>
+                <div class="panel-controls">
+                    <button class="btn btn-ghost" onclick="exportData('csv')">
+                        <span>Export CSV</span>
+                    </button>
+                    <button class="btn btn-ghost" onclick="exportData('json')">
+                        <span>Export JSON</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filter Toolbar -->
+            <div class="filter-toolbar">
+                <div class="segmented-control" id="presetTabs">
+                    <button class="seg-btn active" data-preset="today" onclick="selectPreset('today')">Dnes</button>
+                    <button class="seg-btn" data-preset="yesterday" onclick="selectPreset('yesterday')">Včera</button>
+                    <button class="seg-btn" data-preset="this_week" onclick="selectPreset('this_week')">Tento týždeň</button>
+                    <button class="seg-btn" data-preset="last_7_days" onclick="selectPreset('last_7_days')">7 dní</button>
+                    <button class="seg-btn" data-preset="this_month" onclick="selectPreset('this_month')">Tento mesiac</button>
+                    <button class="seg-btn" data-preset="last_30_days" onclick="selectPreset('last_30_days')">30 dní</button>
+                    <button class="seg-btn" data-preset="this_year" onclick="selectPreset('this_year')">Tento rok</button>
+                    <button class="seg-btn" data-preset="custom" onclick="selectPreset('custom')">Vlastný rozsah</button>
+                </div>
+
+                <div class="custom-range-bar">
+                    <div class="field-inline">
+                        <label for="filterStartDate">Od</label>
+                        <input type="date" id="filterStartDate" class="input-control">
+                    </div>
+                    <div class="field-inline">
+                        <label for="filterEndDate">Do</label>
+                        <input type="date" id="filterEndDate" class="input-control">
+                    </div>
+                    <div class="field-inline">
+                        <label for="filterGroupBy">Granularita</label>
+                        <select id="filterGroupBy" class="select-control">
+                            <option value="auto">Automaticky</option>
+                            <option value="hour">Hodinová (00:00 – 23:00)</option>
+                            <option value="day">Denná</option>
+                            <option value="month">Mesačná</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="applyCustomFilter()">Aplikovať filter</button>
+                </div>
+            </div>
+
+            <!-- Filtered Period Summary Strip -->
+            <div class="summary-strip">
+                <div class="strip-cell">
+                    <span class="strip-label">CELKOVÝ OBJEM V OBDOBÍ</span>
+                    <span class="strip-val" id="rangeTotalValue">0.00 GB</span>
+                </div>
+                <div class="strip-cell">
+                    <span class="strip-label">PRIJATÉ DÁTA (DOWNLOAD)</span>
+                    <span class="strip-val down-text" id="rangeInValue">0.00 GB</span>
+                </div>
+                <div class="strip-cell">
+                    <span class="strip-label">ODOSLANÉ DÁTA (UPLOAD)</span>
+                    <span class="strip-val up-text" id="rangeOutValue">0.00 GB</span>
+                </div>
+                <div class="strip-cell">
+                    <span class="strip-label">MAXIMÁLNY INTERVAL (ŠPIČKA)</span>
+                    <span class="strip-val strip-val-sm" id="rangePeakValue">—</span>
+                </div>
+            </div>
+
+            <!-- Historical Bar Chart -->
+            <div class="chart-frame history-frame">
+                <canvas id="historyCanvas"></canvas>
+            </div>
+
+            <!-- Collapsible Detailed Log Table -->
+            <details class="Clean-details">
+                <summary>
+                    <span>Detailný rozpis časových intervalov (<span id="timelineRowCount">0</span> záznamov)</span>
+                    <span class="details-chevron">Rozbaliť tabuľku</span>
+                </summary>
+                <div class="table-container">
+                    <table class="pro-table">
+                        <thead>
+                            <tr>
+                                <th>Časový interval</th>
+                                <th class="num-col">Download</th>
+                                <th class="num-col">Upload</th>
+                                <th class="num-col">Celkovo</th>
+                                <th>Podiel v období</th>
+                            </tr>
+                        </thead>
+                        <tbody id="timelineTableBody"></tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+
+        <!-- Bottom Split Layout: Applications & System Interfaces/Sockets -->
+        <div class="split-grid">
+            <!-- Left: Application Traffic Matrix -->
+            <section class="surface-panel">
+                <div class="panel-head">
+                    <div class="panel-titles">
+                        <h2 class="section-title">Spotreba podľa aplikácií a procesov</h2>
+                        <p class="section-subtitle">Kliknutím na aplikáciu zobrazíš jej hodinový profil alebo proces ukončíš</p>
+                    </div>
+                    <div class="segmented-control seg-sm">
+                        <button class="seg-btn active" id="appModeLiveBtn" onclick="setAppViewMode('live')">Aktívna relácia</button>
+                        <button class="seg-btn" id="appModeHistBtn" onclick="setAppViewMode('history')">Podľa filtra</button>
+                    </div>
+                </div>
+
+                <div class="filter-input-wrap">
+                    <input type="text" id="appSearchInput" class="input-control search-field" placeholder="Filtrovať proces alebo aplikáciu (napr. Chrome, Teams, Safari...)" oninput="renderAppTable()">
+                </div>
+
+                <div class="table-container app-table-height">
+                    <table class="pro-table">
+                        <thead>
+                            <tr>
+                                <th>Aplikácia / Proces</th>
+                                <th id="appColSpeed" class="num-col">Rýchlosť</th>
+                                <th class="num-col">Download</th>
+                                <th class="num-col">Upload</th>
+                                <th class="num-col">Spolu</th>
+                                <th class="num-col">Akcia</th>
+                            </tr>
+                        </thead>
+                        <tbody id="appTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Right: Network Interfaces + Active Connections -->
+            <div class="side-stack">
+                <section class="surface-panel">
+                    <div class="panel-head">
+                        <div class="panel-titles">
+                            <h2 class="section-title">Sieťové adaptéry</h2>
+                            <p class="section-subtitle">Fyzické rozhrania a virtuálne tunely (netstat)</p>
+                        </div>
+                    </div>
+                    <div class="iface-stack" id="interfacesList"></div>
+                </section>
+
+                <section class="surface-panel">
+                    <div class="panel-head">
+                        <div class="panel-titles">
+                            <h2 class="section-title">Aktívne sokety a Geografické uzly</h2>
+                            <p class="section-subtitle">Otvorené spojenia s identifikáciou krajiny a organizácie servera</p>
+                        </div>
+                        <button class="btn btn-ghost btn-xs" onclick="fetchConnections()">Obnoviť</button>
+                    </div>
+                    <div class="table-container conn-table-height">
+                        <table class="pro-table compact">
+                            <thead>
+                                <tr>
+                                    <th>Proces</th>
+                                    <th>Protokol</th>
+                                    <th>Vzdialený bod</th>
+                                    <th>Organizácia / Krajina</th>
+                                </tr>
+                            </thead>
+                            <tbody id="connectionsTableBody"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- App Inspector Modal (Per-App Hourly Chart & Connections) -->
+    <div id="appDetailModal" class="modal-backdrop hidden">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-head">
+                <div>
+                    <h3 class="modal-title" id="inspectorAppTitle">Profil aplikácie</h3>
+                    <p class="modal-subtitle">Dnešná hodinová spotreba a otvorené sieťové spojenia procesu</p>
+                </div>
+                <button class="btn-close" onclick="closeAppInspector()">✕</button>
+            </div>
+            <div class="modal-content">
+                <div class="chart-frame" style="height:180px;margin-bottom:16px;">
+                    <canvas id="appDetailCanvas"></canvas>
+                </div>
+                <div class="table-container" style="max-height:190px;">
+                    <table class="pro-table compact">
+                        <thead>
+                            <tr>
+                                <th>Protokol</th>
+                                <th>Vzdialená adresa</th>
+                                <th>Organizácia / Geografia</th>
+                                <th>Stav</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inspectorConnBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-danger" id="inspectorKillBtn">Ukončiť proces (SIGTERM)</button>
+                <button class="btn btn-secondary" onclick="closeAppInspector()">Zavrieť</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings, Storage & Quotas Modal -->
+    <div id="limitsModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-head">
+                <div>
+                    <h3 class="modal-title">Konfigurácia kvót, systému a úložiska</h3>
+                    <p class="modal-subtitle">Nastavenie limitov, automatického štartu a umiestnenia databázy</p>
+                </div>
+                <button class="btn-close" onclick="closeLimitsModal()">✕</button>
+            </div>
+            <div class="modal-content">
+                <div class="storage-info-box">
+                    <span class="strip-label">UMIESTNENIE SQLITE DATABÁZY</span>
+                    <code id="modalDbPath">~/Library/Application Support/NetPulse/netpulse_data.db</code>
+                    <div style="margin-top:8px;">
+                        <button class="btn btn-ghost btn-xs" onclick="revealDatabase()">Zobraziť súbor vo Finderi</button>
+                    </div>
+                </div>
+
+                <div class="form-grid" style="margin-top:14px;">
+                    <div class="form-field">
+                        <label for="inputDailyLimit">Denná kvóta (GB)</label>
+                        <input type="number" step="0.5" min="0" id="inputDailyLimit" class="input-control" placeholder="0">
+                    </div>
+                    <div class="form-field">
+                        <label for="inputWeeklyLimit">Týždenná kvóta (GB)</label>
+                        <input type="number" step="1" min="0" id="inputWeeklyLimit" class="input-control" placeholder="0">
+                    </div>
+                    <div class="form-field">
+                        <label for="inputMonthlyLimit">Mesačná kvóta (GB)</label>
+                        <input type="number" step="5" min="0" id="inputMonthlyLimit" class="input-control" placeholder="500">
+                    </div>
+                    <div class="form-field">
+                        <label for="inputAlertPct">Prah varovania (%)</label>
+                        <input type="number" step="5" min="10" max="100" id="inputAlertPct" class="input-control" value="85">
+                    </div>
+                </div>
+
+                <div class="checkbox-row">
+                    <input type="checkbox" id="inputLaunchAtLogin">
+                    <label for="inputLaunchAtLogin">Spúšťať NetPulse automaticky pri prihlásení do macOS (LaunchAgent)</label>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeLimitsModal()">Zrušiť</button>
+                <button class="btn btn-primary" onclick="saveSettings()">Uložiť konfiguráciu</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="netpulse://app/app.js"></script>
+</body>
+</html>
