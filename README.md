@@ -22,7 +22,7 @@ You can install **NetPulse** on any Mac running **macOS 13.0 (Ventura) or newer*
 
 ### Option A: One-Click Installer Package (Recommended for Colleagues)
 1. Download **[`NetPulse-Mac-Installer.zip`](NetPulse-Mac-Installer.zip)** from this repository (or clone the repo).
-2. Extract the archive and double-click **`Install_NetPulse.command`** (or **`Instalovat_NetPulse.command`**).
+2. Extract the archive and double-click **`Install_NetPulse.command`**.
    - *Tip:* If macOS asks for confirmation on first run, right-click **`Install_NetPulse.command`** and select **Open**.
 3. The installer automatically:
    - Copies universal **`NetPulse.app`** (`arm64` + `x86_64`) into `/Applications`
@@ -125,7 +125,6 @@ NetPulse/
 │   ├── netpulse-dark-preview.svg   # Vector screenshot — Dark Mode dashboard
 │   └── netpulse-light-preview.svg  # Vector screenshot — Light Mode & Process Inspector
 ├── NetPulse.app/                # Standalone Universal macOS Application Bundle
-├── Install_NetPulse.command     # One-click English macOS installer script
-├── Instalovat_NetPulse.command  # One-click Slovak macOS installer script
+├── Install_NetPulse.command     # One-click macOS Universal installer script
 └── NetPulse-Mac-Installer.zip   # Ready-to-share Universal macOS installer archive
 ```

@@ -72,7 +72,7 @@
   <text x="310" y="101" fill="#fafafa" font-size="11" class="mono">192.168.1.1</text>
 
   <text x="440" y="85" fill="#71717a" font-size="9" font-weight="600" class="sans">PUBLIC IP / ISP</text>
-  <text x="440" y="101" fill="#fafafa" font-size="11" class="mono">84.47.112.90 · Orange Slovensko</text>
+  <text x="440" y="101" fill="#fafafa" font-size="11" class="mono">84.47.112.90 · Cloudflare, Inc.</text>
 
   <text x="690" y="85" fill="#71717a" font-size="9" font-weight="600" class="sans">GATEWAY PING</text>
   <text x="690" y="101" fill="#10b981" font-size="11" font-weight="600" class="mono">2.1 ms</text>
