@@ -202,6 +202,16 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
             return (try? JSONSerialization.data(withJSONObject: ["status": "started"])) ?? Data()
         }
 
+        if path == "/api/check_updates" {
+            engine.checkForUpdates(manual: true)
+            return (try? JSONSerialization.data(withJSONObject: ["status": "checking"])) ?? Data()
+        }
+
+        if path == "/api/install_update" {
+            engine.performSelfUpdate()
+            return (try? JSONSerialization.data(withJSONObject: ["status": "installing"])) ?? Data()
+        }
+
         return (try? JSONSerialization.data(withJSONObject: ["status": "ok"])) ?? Data()
     }
 
@@ -214,7 +224,7 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
-// MARK: - Native Bridge Handler for Actions (Save Settings, Reveal DB in Finder, Kill Process, Export)
+// MARK: - Native Bridge Handler for Actions (Save Settings, Reveal DB in Finder, Kill Process, Export, Auto-Update)
 final class NativeActionHandler: NSObject, WKScriptMessageHandler {
     weak var appDelegate: AppDelegate?
 
@@ -258,6 +268,12 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
 
         case "run_speedtest":
             TelemetryEngine.shared.runSpeedtest()
+
+        case "check_updates":
+            TelemetryEngine.shared.checkForUpdates(manual: true)
+
+        case "install_update":
+            TelemetryEngine.shared.performSelfUpdate()
 
         case "export":
             let fmt = (dict["format"] as? String) ?? "csv"
@@ -326,6 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let topApp1 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
     let topApp2 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
     let topApp3 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
+    let updateMenuItem = NSMenuItem(title: "Check for Updates... (v2.2.0)", action: nil, keyEquivalent: "u")
 
     func resolveResourceDir() -> String {
         if let resPath = Bundle.main.resourcePath {
@@ -617,6 +634,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         revealDbItem.target = self
         menu.addItem(revealDbItem)
 
+        updateMenuItem.target = self
+        updateMenuItem.action = #selector(handleMenuBarUpdateClick)
+        menu.addItem(updateMenuItem)
+
         menu.addItem(NSMenuItem.separator())
         let statsHeader = NSMenuItem(title: "DATA TRANSFERRED", action: nil, keyEquivalent: "")
         statsHeader.isEnabled = false
@@ -698,6 +719,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let iPing = d.ping_internet_ms >= 0 ? String(format: "%.1f ms", d.ping_internet_ms) : "—"
         pingItem.title = "Latency: Gateway \(rPing) | Internet \(iPing)"
 
+        if d.update_installing {
+            updateMenuItem.title = d.update_status
+        } else if d.update_available {
+            updateMenuItem.title = "Install Update Now (v\(d.latest_version) Available)"
+        } else if d.update_checking {
+            updateMenuItem.title = "Checking for Updates..."
+        } else {
+            updateMenuItem.title = "Check for Updates... (v\(d.app_version))"
+        }
+
         let apps = engine.liveApps
         let slots = [topApp1, topApp2, topApp3]
         for i in 0..<3 {
@@ -720,6 +751,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         appMenuItem.submenu = appMenu
 
         appMenu.addItem(withTitle: "Show NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "1")
+        appMenu.addItem(withTitle: "Check for Updates...", action: #selector(handleMenuBarUpdateClick), keyEquivalent: "u")
         appMenu.addItem(withTitle: "Reveal Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide NetPulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -754,6 +786,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         TelemetryEngine.shared.isMainWindowVisible = false
         mainWindow?.orderOut(nil)
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    @objc func handleMenuBarUpdateClick() {
+        if TelemetryEngine.shared.diagnostics.update_available {
+            TelemetryEngine.shared.performSelfUpdate()
+        } else {
+            TelemetryEngine.shared.checkForUpdates(manual: true)
+            showMainWindow()
+            webView.evaluateJavaScript("openLimitsModal();", completionHandler: nil)
+        }
     }
 
     @objc func revealDatabase() {

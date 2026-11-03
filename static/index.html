@@ -57,6 +57,9 @@
                 <button class="btn btn-ghost" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle Light / Dark Mode">
                     <span id="themeToggleLabel">Light Mode</span>
                 </button>
+                <button class="btn btn-ghost" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click Self-Update">
+                    <span id="topUpdateLabel">v2.2.0 · Update</span>
+                </button>
                 <button class="btn btn-ghost" onclick="revealDatabase()" title="Reveal SQLite Database in Finder">
                     <span>Database</span>
                 </button>
@@ -69,6 +72,15 @@
 
     <!-- Main Content -->
     <main class="workspace">
+        <!-- Auto-Update Notification Banner (shown automatically when a newer version is on GitHub) -->
+        <div id="updateNotificationBanner" class="alert-item alert-update hidden">
+            <div>
+                <strong id="updateBannerTitle">New NetPulse Update Available</strong>
+                <span id="updateBannerNotes" style="margin-left:10px;opacity:0.85;"></span>
+            </div>
+            <button class="btn btn-primary btn-xs" id="updateBannerBtn" onclick="installUpdate()">Install Update Now</button>
+        </div>
+
         <!-- Network Diagnostics, Ping & Storage Bar -->
         <section class="diag-strip">
             <div class="diag-item">
@@ -425,12 +437,21 @@
         <div class="modal-dialog">
             <div class="modal-head">
                 <div>
-                    <h3 class="modal-title">Quotas, System &amp; Storage Settings</h3>
-                    <p class="modal-subtitle">Configure bandwidth caps, login startup, and database storage</p>
+                    <h3 class="modal-title">Quotas, System &amp; Updates</h3>
+                    <p class="modal-subtitle">Configure bandwidth caps, GitHub OTA updates, and background startup</p>
                 </div>
                 <button class="btn-close" onclick="closeLimitsModal()">✕</button>
             </div>
             <div class="modal-content">
+                <div class="storage-info-box" style="margin-bottom:12px;">
+                    <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
+                    <code id="modalUpdateStatus">Up to date (v2.2.0)</code>
+                    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
+                        <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>
+                    </div>
+                </div>
+
                 <div class="storage-info-box">
                     <span class="strip-label">SQLITE DATABASE LOCATION</span>
                     <code id="modalDbPath">~/Library/Application Support/NetPulse/netpulse_data.db</code>

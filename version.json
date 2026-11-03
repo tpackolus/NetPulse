@@ -1,0 +1,7 @@
+{
+  "version": "2.2.0",
+  "build": 220,
+  "released_at": "2026-11-03",
+  "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
+  "release_notes": "Added automatic GitHub OTA update checker, 1-click self-updater, persistent background Menu Bar collector on Cmd+Q, and full 24h bandwidth analytics."
+}

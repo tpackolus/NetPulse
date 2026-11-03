@@ -365,6 +365,9 @@ final class TelemetryEngine {
             if cycle % 15 == 0 {
                 updatePublicIPInfo()
             }
+            if cycle == 0 || cycle % 180 == 0 {
+                checkForUpdates(manual: false)
+            }
             cycle += 1
             Thread.sleep(forTimeInterval: isMainWindowVisible ? 6.0 : 15.0)
         }
@@ -595,5 +598,155 @@ final class TelemetryEngine {
             try? FileManager.default.removeItem(at: plistURL)
         }
         SQLiteManager.shared.updateSettings(["launch_at_login": enabled ? "1" : "0"])
+    }
+
+    // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
+    let currentAppVersion = "2.2.0"
+    let currentAppBuild = 220
+
+    private func compareVersions(_ v1: String, _ v2: String) -> Int {
+        let p1 = v1.split(separator: ".").compactMap { Int($0) }
+        let p2 = v2.split(separator: ".").compactMap { Int($0) }
+        let count = max(p1.count, p2.count)
+        for i in 0..<count {
+            let a = i < p1.count ? p1[i] : 0
+            let b = i < p2.count ? p2[i] : 0
+            if a != b { return a > b ? 1 : -1 }
+        }
+        return 0
+    }
+
+    func checkForUpdates(manual: Bool = false) {
+        lock.lock()
+        if diagnostics.update_checking || diagnostics.update_installing {
+            lock.unlock()
+            return
+        }
+        diagnostics.update_checking = true
+        if manual {
+            diagnostics.update_status = "Checking GitHub for updates..."
+        }
+        lock.unlock()
+
+        let ts = Int(Date().timeIntervalSince1970)
+        guard let url = URL(string: "https://raw.githubusercontent.com/tpackolus/NetPulse/main/version.json?t=\(ts)") else { return }
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        req.timeoutInterval = 6.0
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
+            guard let self = self else { return }
+            self.lock.lock()
+            defer {
+                self.diagnostics.update_checking = false
+                self.lock.unlock()
+            }
+
+            guard let data = data, err == nil,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                if manual {
+                    self.diagnostics.update_status = "Up to date (v\(self.currentAppVersion))"
+                }
+                return
+            }
+
+            let remoteVer = (json["version"] as? String) ?? self.currentAppVersion
+            let remoteBuild = (json["build"] as? Int) ?? self.currentAppBuild
+            let notes = (json["release_notes"] as? String) ?? ""
+
+            let isNewer = (remoteBuild > self.currentAppBuild) || (self.compareVersions(remoteVer, self.currentAppVersion) > 0)
+            self.diagnostics.app_version = self.currentAppVersion
+            self.diagnostics.latest_version = remoteVer
+            self.diagnostics.update_available = isNewer
+            self.diagnostics.update_notes = notes
+            if isNewer {
+                self.diagnostics.update_status = "Update available: v\(remoteVer)"
+            } else {
+                self.diagnostics.update_status = "Up to date (v\(self.currentAppVersion))"
+            }
+        }.resume()
+    }
+
+    func performSelfUpdate() {
+        lock.lock()
+        if diagnostics.update_installing {
+            lock.unlock()
+            return
+        }
+        diagnostics.update_installing = true
+        diagnostics.update_status = "Downloading update from GitHub..."
+        lock.unlock()
+
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+            let zipPath = "/tmp/NetPulse-OTA.zip"
+            let extractDir = "/tmp/NetPulse-OTA-Extract"
+            let downloadURL = "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip"
+
+            try? FileManager.default.removeItem(atPath: zipPath)
+            try? FileManager.default.removeItem(atPath: extractDir)
+
+            _ = self.runCommand("/usr/bin/curl", ["-L", "-s", "--max-time", "45", "-o", zipPath, downloadURL], timeout: 50)
+
+            guard FileManager.default.fileExists(atPath: zipPath) else {
+                self.lock.lock()
+                self.diagnostics.update_installing = false
+                self.diagnostics.update_status = "Update failed (network error)"
+                self.lock.unlock()
+                return
+            }
+
+            self.lock.lock()
+            self.diagnostics.update_status = "Extracting & verifying update..."
+            self.lock.unlock()
+
+            _ = self.runCommand("/usr/bin/ditto", ["-x", "-k", zipPath, extractDir], timeout: 15)
+            let extractedApp = "\(extractDir)/NetPulse.app"
+            let extractedExec = "\(extractedApp)/Contents/MacOS/NetPulse"
+
+            guard FileManager.default.fileExists(atPath: extractedExec) else {
+                self.lock.lock()
+                self.diagnostics.update_installing = false
+                self.diagnostics.update_status = "Update failed (invalid archive)"
+                self.lock.unlock()
+                return
+            }
+
+            _ = self.runCommand("/usr/bin/xattr", ["-cr", extractedApp])
+            _ = self.runCommand("/bin/chmod", ["+x", extractedExec])
+
+            self.lock.lock()
+            self.diagnostics.update_status = "Installing & restarting NetPulse..."
+            self.lock.unlock()
+
+            let currentBundle = Bundle.main.bundlePath
+            let targetBundle = currentBundle.hasSuffix(".app") ? currentBundle : "/Applications/NetPulse.app"
+            let updaterScriptPath = "/tmp/netpulse_ota_installer.sh"
+            let script = """
+            #!/bin/bash
+            sleep 1
+            rm -rf "\(targetBundle)"
+            cp -R "\(extractedApp)" "\(targetBundle)"
+            if [ -d "/Applications/NetPulse.app" ] && [ "\(targetBundle)" != "/Applications/NetPulse.app" ]; then
+                rm -rf "/Applications/NetPulse.app"
+                cp -R "\(extractedApp)" "/Applications/NetPulse.app"
+                xattr -cr "/Applications/NetPulse.app" 2>/dev/null || true
+            fi
+            xattr -cr "\(targetBundle)" 2>/dev/null || true
+            chmod +x "\(targetBundle)/Contents/MacOS/NetPulse"
+            open "\(targetBundle)"
+            rm -rf "\(zipPath)" "\(extractDir)" "\(updaterScriptPath)"
+            """
+            try? script.write(toFile: updaterScriptPath, atomically: true, encoding: .utf8)
+            _ = self.runCommand("/bin/chmod", ["+x", updaterScriptPath])
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+            proc.arguments = [updaterScriptPath]
+            try? proc.run()
+
+            Thread.sleep(forTimeInterval: 0.4)
+            exit(0)
+        }
     }
 }

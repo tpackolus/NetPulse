@@ -73,6 +73,13 @@ struct DiagnosticsInfo: Codable {
     var db_size_kb: Int64 = 0
     var speedtest_down_mbps: Double = 0
     var speedtest_running: Bool = false
+    var app_version: String = "2.2.0"
+    var latest_version: String = "2.2.0"
+    var update_available: Bool = false
+    var update_checking: Bool = false
+    var update_installing: Bool = false
+    var update_status: String = "Up to date (v2.2.0)"
+    var update_notes: String = ""
 }
 
 struct RealtimePoint: Codable {

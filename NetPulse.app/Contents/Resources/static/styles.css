@@ -254,6 +254,12 @@ body {
     color: #fecaca;
 }
 
+.alert-update {
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    border-left: 3px solid var(--down-color);
+    color: var(--text-primary);
+}
+
 .hidden {
     display: none !important;
 }

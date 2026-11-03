@@ -60,6 +60,10 @@ cd NetPulse
   - Displays Wi-Fi SSID / network profile, local IPv4, default gateway IP, public IP & ISP, gateway ping, internet ping (`1.1.1.1`), VPN tunnel status (`utun`), and an integrated Cloudflare HTTPS throughput speedtest.
 - **Native CSV & JSON Export + Data Quotas**
   - Configure daily, weekly, or monthly bandwidth quotas with alert thresholds, and export any historical date range to CSV or JSON via native `NSSavePanel`.
+- **Automatic GitHub OTA Update Checker & 1-Click Self-Updater**
+  - Automatically checks `version.json` on GitHub (`tpackolus/NetPulse`) and lets users update `NetPulse.app` in place with a single click from the Top Bar (`v2.2.0 · Update`), Settings modal (`1-Click Update from GitHub`), or macOS Menu Bar (`Check for Updates...`), preserving all SQLite data.
+- **Persistent Background Collector (`Cmd + Q` / Window Close)**
+  - Closing the window or pressing `Cmd + Q` hides the window and Dock icon while keeping the Menu Bar live monitor and SQLite telemetry collector running nonstop in the background.
 
 ---
 
@@ -69,7 +73,7 @@ NetPulse is engineered for minimal energy impact on MacBooks:
 - **Direct Kernel Interface Counters (`getifaddrs`)**: Reads hardware interface counters directly from BSD kernel memory in `< 0.05 ms` per second.
 - **Adaptive Process Sampling**:
   - **Window Open**: Samples per-process throughput every **3 seconds** (`nettop -n -P -L 1` with DNS resolution disabled for instant execution).
-  - **Window Closed to Menu Bar (`Cmd + W`)**: Automatically throttles process sampling to once every **15 seconds**, keeping average CPU usage around **0.1% – 0.3%**.
+  - **Window Closed to Menu Bar (`Cmd + W` / `Cmd + Q`)**: Automatically throttles process sampling to once every **15 seconds**, keeping average CPU usage around **0.1% – 0.3%**.
 
 ---
 
@@ -82,7 +86,7 @@ All historical traffic metrics and user settings are stored locally in a native 
 ```
 
 - You can open its exact location in Finder at any time by clicking **Database** in the top bar or selecting **Reveal SQLite Database in Finder** (`Cmd + F`) from the Menu Bar icon.
-- Data persists across application restarts and macOS reboots.
+- Data persists across application updates, restarts, and macOS reboots.
 
 ---
 
@@ -119,8 +123,9 @@ codesign --force --deep --sign - NetPulse.app
 ```text
 NetPulse/
 ├── CoreStorage.swift            # Native C SQLite3 storage engine & 24h/daily/monthly aggregation
-├── TelemetryEngine.swift        # BSD getifaddrs(), adaptive nettop collector, ping & speedtest
+├── TelemetryEngine.swift        # BSD getifaddrs(), adaptive nettop collector, ping, speedtest & OTA updater
 ├── main.swift                   # Native NSApplication, Menu Bar widget & netpulse:// scheme handler
+├── version.json                 # GitHub OTA version manifest for automatic update checks
 ├── static/
 │   ├── index.html               # Analytical telemetry dashboard markup (English)
 │   ├── styles.css               # Dark & Light theme design system + responsive monitor scaling
@@ -128,7 +133,7 @@ NetPulse/
 ├── docs/
 │   ├── netpulse-dark.png        # Real screenshot — Full Dark Mode dashboard
 │   ├── netpulse-light.png       # Real screenshot — Full Light Mode dashboard
-│   └── netpulse-inspector.png   # Real screenshot — Quotas, System & Storage modal
+│   └── netpulse-inspector.png   # Real screenshot — Quotas, System & Updates modal
 ├── NetPulse.app/                # Standalone Universal macOS Application Bundle
 ├── Install_NetPulse.command     # One-click macOS Universal installer script
 └── NetPulse-Mac-Installer.zip   # Ready-to-share Universal macOS installer archive

@@ -206,6 +206,41 @@ function updateRealtimeUI(data) {
                 stVal.textContent = `Download: ${d.speedtest_down_mbps.toFixed(1)} Mbps`;
             }
         }
+
+        // Software Update UI synchronization
+        const topUpdateLabel = document.getElementById('topUpdateLabel');
+        const topUpdateBtn = document.getElementById('topUpdateBtn');
+        const modalUpdateStatus = document.getElementById('modalUpdateStatus');
+        const banner = document.getElementById('updateNotificationBanner');
+        const bannerTitle = document.getElementById('updateBannerTitle');
+        const bannerNotes = document.getElementById('updateBannerNotes');
+
+        if (modalUpdateStatus && d.update_status) {
+            modalUpdateStatus.textContent = d.update_status + (d.update_notes ? ` — ${d.update_notes}` : '');
+        }
+        if (topUpdateLabel) {
+            if (d.update_installing) {
+                topUpdateLabel.textContent = 'Updating...';
+            } else if (d.update_available) {
+                topUpdateLabel.textContent = `Update Available (v${d.latest_version})`;
+                if (topUpdateBtn) topUpdateBtn.style.borderColor = '#10b981';
+            } else if (d.update_checking) {
+                topUpdateLabel.textContent = 'Checking...';
+            } else {
+                topUpdateLabel.textContent = `v${d.app_version || '2.2.0'} · Update`;
+                if (topUpdateBtn) topUpdateBtn.style.borderColor = '';
+            }
+        }
+        if (banner) {
+            if (d.update_available) {
+                banner.classList.remove('hidden');
+                if (bannerTitle) bannerTitle.textContent = `New NetPulse v${d.latest_version} is available on GitHub`;
+                if (bannerNotes) bannerNotes.textContent = d.update_notes || '';
+            } else {
+                banner.classList.add('hidden');
+            }
+        }
+        state.latestDiagnostics = d;
     }
 
     const s = data.summaries;
@@ -775,6 +810,33 @@ function saveSettings() {
     });
     fetchRealtime();
     closeLimitsModal();
+}
+
+function checkUpdates() {
+    const modalUpdateStatus = document.getElementById('modalUpdateStatus');
+    if (modalUpdateStatus) modalUpdateStatus.textContent = 'Checking GitHub for updates...';
+    postNativeAction({ action: 'check_updates' });
+    fetch('netpulse://app/api/check_updates').catch(() => {});
+    setTimeout(fetchRealtime, 800);
+    setTimeout(fetchRealtime, 2000);
+}
+
+function installUpdate() {
+    const modalUpdateStatus = document.getElementById('modalUpdateStatus');
+    if (modalUpdateStatus) modalUpdateStatus.textContent = 'Downloading & installing latest build from GitHub...';
+    const topUpdateLabel = document.getElementById('topUpdateLabel');
+    if (topUpdateLabel) topUpdateLabel.textContent = 'Updating...';
+    postNativeAction({ action: 'install_update' });
+    fetch('netpulse://app/api/install_update').catch(() => {});
+}
+
+function handleTopUpdateBtn() {
+    if (state.latestDiagnostics && state.latestDiagnostics.update_available) {
+        installUpdate();
+    } else {
+        checkUpdates();
+        openLimitsModal();
+    }
 }
 
 function escapeHtml(str) {
