@@ -55,7 +55,10 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
                 url: url,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": mime]
+                headerFields: [
+                    "Content-Type": mime,
+                    "Cache-Control": "no-store, no-cache, must-revalidate"
+                ]
             )!
             urlSchemeTask.didReceive(resp)
             urlSchemeTask.didReceive(fileData)
@@ -566,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         )
 
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         let schemeHandler = NetPulseSchemeHandler(resourceDir: resolveResourceDir())
         config.setURLSchemeHandler(schemeHandler, forURLScheme: "netpulse")
         config.userContentController.add(NativeActionHandler(appDelegate: self), name: "netpulseNative")
