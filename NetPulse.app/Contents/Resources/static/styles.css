@@ -1204,3 +1204,90 @@ canvas {
         order: 3;
     }
 }
+
+/* ==========================================================================
+   GeoIP, ASN/ISP & Security Inspector Styles
+   ========================================================================== */
+.modal-lg {
+    max-width: 780px !important;
+}
+
+.inspector-geo-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.geo-stat-box {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 8px 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.geo-stat-box strong {
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.geo-flag {
+    font-size: 0.9rem;
+    margin-right: 3px;
+}
+
+.sec-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.67rem;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.sec-verified {
+    background: rgba(16, 185, 129, 0.14);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.32);
+}
+
+.sec-local {
+    background: rgba(59, 130, 246, 0.14);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.32);
+}
+
+.sec-warning {
+    background: rgba(245, 158, 11, 0.16);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.38);
+}
+
+.sec-suspicious {
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.42);
+}
+
+.sec-text-ok {
+    color: #10b981 !important;
+}
+
+.sec-text-warn {
+    color: #f59e0b !important;
+}
+
+.sec-text-danger {
+    color: #ef4444 !important;
+}
+

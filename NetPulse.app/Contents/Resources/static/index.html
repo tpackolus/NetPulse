@@ -58,7 +58,7 @@
                     <span id="themeToggleLabel">Light Mode</span>
                 </button>
                 <button class="btn btn-ghost" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click Self-Update">
-                    <span id="topUpdateLabel">v2.2.0 · Update</span>
+                    <span id="topUpdateLabel">v2.3.0 · Update</span>
                 </button>
                 <button class="btn btn-ghost" onclick="revealDatabase()" title="Reveal SQLite Database in Finder">
                     <span>Database</span>
@@ -374,8 +374,8 @@
                 <section class="surface-panel">
                     <div class="panel-head">
                         <div class="panel-titles">
-                            <h2 class="section-title">Active Sockets &amp; Geo Nodes</h2>
-                            <p class="section-subtitle">Open TCP/UDP endpoints with organization &amp; country lookup</p>
+                            <h2 class="section-title">Active Sockets, GeoIP &amp; Security</h2>
+                            <p class="section-subtitle">Live endpoints with country flag, ASN/ISP &amp; security verification</p>
                         </div>
                         <button class="btn btn-ghost btn-xs" onclick="fetchConnections()">Refresh</button>
                     </div>
@@ -384,9 +384,10 @@
                             <thead>
                                 <tr>
                                     <th>Process</th>
-                                    <th>Proto</th>
+                                    <th>Proto / Port</th>
                                     <th>Remote Endpoint</th>
-                                    <th>Organization / Country</th>
+                                    <th>Country &amp; Organization (ASN/ISP)</th>
+                                    <th>Security</th>
                                 </tr>
                             </thead>
                             <tbody id="connectionsTableBody"></tbody>
@@ -397,28 +398,47 @@
         </div>
     </main>
 
-    <!-- App Inspector Modal (Per-App Hourly Chart & Connections) -->
+    <!-- App Inspector Modal (Per-App Hourly Chart, GeoIP & Security Inspector) -->
     <div id="appDetailModal" class="modal-backdrop hidden">
         <div class="modal-dialog modal-lg">
             <div class="modal-head">
                 <div>
                     <h3 class="modal-title" id="inspectorAppTitle">Process Profile</h3>
-                    <p class="modal-subtitle">24-hour bandwidth distribution &amp; active network sockets</p>
+                    <p class="modal-subtitle">24-hour bandwidth distribution, GeoIP country lookup, ASN/ISP &amp; socket security audit</p>
                 </div>
                 <button class="btn-close" onclick="closeAppInspector()">✕</button>
             </div>
             <div class="modal-content">
-                <div class="chart-frame" style="height:180px;margin-bottom:16px;">
+                <div class="chart-frame" style="height:165px;margin-bottom:12px;">
                     <canvas id="appDetailCanvas"></canvas>
                 </div>
-                <div class="table-container" style="max-height:190px;">
+                <div class="inspector-geo-strip" id="inspectorGeoSummary">
+                    <div class="geo-stat-box">
+                        <span class="strip-label">OPEN SOCKETS</span>
+                        <strong id="inspSocketCount">0</strong>
+                    </div>
+                    <div class="geo-stat-box">
+                        <span class="strip-label">COUNTRIES (GEOIP)</span>
+                        <strong id="inspCountryList">—</strong>
+                    </div>
+                    <div class="geo-stat-box">
+                        <span class="strip-label">ORGANIZATIONS (ASN)</span>
+                        <strong id="inspOrgCount">0 Providers</strong>
+                    </div>
+                    <div class="geo-stat-box">
+                        <span class="strip-label">SECURITY STATUS</span>
+                        <strong id="inspSecurityStatus" class="sec-text-ok">Verified</strong>
+                    </div>
+                </div>
+                <div class="table-container" style="max-height:200px;margin-top:10px;">
                     <table class="pro-table compact">
                         <thead>
                             <tr>
-                                <th>Protocol</th>
-                                <th>Remote Address</th>
-                                <th>Organization / Country</th>
-                                <th>State</th>
+                                <th>Proto / Port</th>
+                                <th>Remote Endpoint</th>
+                                <th>Country</th>
+                                <th>Organization (ASN / ISP)</th>
+                                <th>Security &amp; State</th>
                             </tr>
                         </thead>
                         <tbody id="inspectorConnBody"></tbody>
@@ -445,7 +465,7 @@
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.2.0)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.3.0)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>

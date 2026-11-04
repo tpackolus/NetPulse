@@ -10,10 +10,12 @@
     <string>NetPulse</string>
     <key>CFBundleDisplayName</key>
     <string>NetPulse</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleVersion</key>
-    <string>220</string>
+    <string>230</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.2.0</string>
+    <string>2.3.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSHighResolutionCapable</key>

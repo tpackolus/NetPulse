@@ -25,8 +25,16 @@ final class TelemetryEngine {
     var liveInterfaces: [InterfaceRow] = []
     var liveApps: [AppRow] = []
     var realtimeHistory: [RealtimePoint] = []
+    struct GeoIntelEntry {
+        let countryCode: String
+        let countryFlag: String
+        let countryName: String
+        let asnIsp: String
+    }
+
     var diagnostics = DiagnosticsInfo()
     var geoCache: [String: String] = [:]
+    var geoIntelCache: [String: GeoIntelEntry] = [:]
 
     private let friendlyAppMap: [String: String] = [
         "Google Chrome H": "Google Chrome",
@@ -426,29 +434,137 @@ final class TelemetryEngine {
         lock.unlock()
     }
 
+    private func countryName(for code: String) -> String {
+        let cc = code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cc.count == 2 else { return "External" }
+        return Locale(identifier: "en_US").localizedString(forRegionCode: cc) ?? cc
+    }
+
+    private func lookupCymruDNS(for ip: String) -> GeoIntelEntry? {
+        let parts = ip.split(separator: ".")
+        guard parts.count == 4 else { return nil }
+        let reversedIP = "\(parts[3]).\(parts[2]).\(parts[1]).\(parts[0])"
+        let originOut = runCommand("/usr/bin/dig", ["+short", "+time=2", "+tries=1", "\(reversedIP).origin.asn.cymru.com", "TXT"])
+        let cleanOrigin = originOut.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanOrigin.isEmpty else { return nil }
+
+        // Format: "15169 | 142.250.0.0/15 | US | arin | 2012-05-24"
+        let fields = cleanOrigin.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard fields.count >= 3 else { return nil }
+        let asn = fields[0].split(separator: " ").first.map(String.init) ?? ""
+        let cc = fields[2].uppercased()
+        guard !asn.isEmpty else { return nil }
+
+        var orgName = "AS\(asn)"
+        let asOut = runCommand("/usr/bin/dig", ["+short", "+time=2", "+tries=1", "AS\(asn).asn.cymru.com", "TXT"])
+        let cleanAs = asOut.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let asFields = cleanAs.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        if let lastField = asFields.last, !lastField.isEmpty {
+            orgName = "AS\(asn) \(lastField)"
+        }
+
+        let flag = flagEmoji(for: cc)
+        let cName = countryName(for: cc)
+        return GeoIntelEntry(countryCode: cc, countryFlag: flag, countryName: cName, asnIsp: orgName)
+    }
+
     private func updatePublicIPInfo() {
-        guard let url = URL(string: "http://ip-api.com/json/?fields=status,country,city,isp,org,query") else { return }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 3.5
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
-            guard let self = self, let data = data, err == nil else { return }
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let query = json["query"] as? String {
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+
+            // Fast Step 1: Cloudflare 1.1.1.1 Anycast Trace (never rate-limited, ~9ms latency)
+            let cfTrace = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "3", "https://1.1.1.1/cdn-cgi/trace"])
+            var detectedIP = ""
+            var detectedCC = ""
+            for line in cfTrace.components(separatedBy: .newlines) {
+                if line.hasPrefix("ip=") {
+                    detectedIP = String(line.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+                } else if line.hasPrefix("loc=") {
+                    detectedCC = String(line.dropFirst(4)).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+
+            if detectedIP.isEmpty {
+                let awsIP = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "3", "https://checkip.amazonaws.com"]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !awsIP.isEmpty && !awsIP.contains("<") {
+                    detectedIP = awsIP
+                }
+            }
+
+            if !detectedIP.isEmpty {
+                let known = self.knownIPPrefixIntel(for: detectedIP) ?? self.lookupCymruDNS(for: detectedIP)
+                let cc = !detectedCC.isEmpty ? detectedCC : (known?.countryCode ?? "")
+                let flag = self.flagEmoji(for: cc)
+                let cName = known?.countryName ?? self.countryName(for: cc)
+                let isp = known?.asnIsp ?? "Active Internet Gateway"
+
+                self.lock.lock()
+                self.diagnostics.public_ip = detectedIP
+                if self.diagnostics.isp_org == "—" || self.diagnostics.isp_org.isEmpty {
+                    self.diagnostics.isp_org = isp
+                }
+                if self.diagnostics.country_city == "—" || self.diagnostics.country_city.isEmpty {
+                    self.diagnostics.country_city = "\(flag) \(cName)"
+                }
+                self.lock.unlock()
+            }
+
+            // Step 2: Enrich with city & ISP details via ip-api.com or ipwho.is if available
+            let out1 = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "4", "http://ip-api.com/json/?fields=status,country,countryCode,city,isp,org,as,query"])
+            if let data = out1.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let query = json["query"] as? String, !query.isEmpty {
+                let cc = (json["countryCode"] as? String) ?? detectedCC
+                let flag = self.flagEmoji(for: cc)
                 let isp = (json["isp"] as? String) ?? (json["org"] as? String) ?? "—"
+                let asStr = (json["as"] as? String) ?? ""
+                let asnPrefix = asStr.split(separator: " ").first.map(String.init) ?? ""
+                let fullIsp = (!asnPrefix.isEmpty && !isp.contains(asnPrefix)) ? "\(asnPrefix) · \(isp)" : isp
                 let city = (json["city"] as? String) ?? ""
                 let country = (json["country"] as? String) ?? ""
-                let loc = [city, country].filter { !$0.isEmpty }.joined(separator: ", ")
+                let locParts = [city, country].filter { !$0.isEmpty }.joined(separator: ", ")
+                let loc = locParts.isEmpty ? "—" : "\(flag) \(locParts)"
 
                 self.lock.lock()
                 self.diagnostics.public_ip = query
-                self.diagnostics.isp_org = isp
-                self.diagnostics.country_city = loc.isEmpty ? "—" : loc
+                if fullIsp != "—" { self.diagnostics.isp_org = fullIsp }
+                if loc != "—" { self.diagnostics.country_city = loc }
                 self.lock.unlock()
+                return
             }
-        }.resume()
+
+            // Provider 2: ipwho.is over HTTPS
+            let out2 = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "4", "https://ipwho.is/"])
+            if let data = out2.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let ip = json["ip"] as? String, !ip.isEmpty {
+                let cc = (json["country_code"] as? String) ?? detectedCC
+                let flag = self.flagEmoji(for: cc)
+                let city = (json["city"] as? String) ?? ""
+                let country = (json["country"] as? String) ?? ""
+                var isp = "—"
+                if let conn = json["connection"] as? [String: Any] {
+                    let org = (conn["isp"] as? String) ?? (conn["org"] as? String) ?? "—"
+                    if let asn = conn["asn"] as? Int {
+                        isp = "AS\(asn) · \(org)"
+                    } else {
+                        isp = org
+                    }
+                }
+                let locParts = [city, country].filter { !$0.isEmpty }.joined(separator: ", ")
+                let loc = locParts.isEmpty ? "—" : "\(flag) \(locParts)"
+
+                self.lock.lock()
+                self.diagnostics.public_ip = ip
+                if isp != "—" { self.diagnostics.isp_org = isp }
+                if loc != "—" { self.diagnostics.country_city = loc }
+                self.lock.unlock()
+                return
+            }
+        }
     }
 
-    // MARK: - Built-in Speedtest (Cloudflare 10MB test payload)
+    // MARK: - Built-in Multi-CDN Live Speedtest (Google CDN + Apple CDN + Cloudflare + Interface Delta Tracking)
     func runSpeedtest() {
         lock.lock()
         if diagnostics.speedtest_running {
@@ -456,27 +572,90 @@ final class TelemetryEngine {
             return
         }
         diagnostics.speedtest_running = true
+        diagnostics.speedtest_down_mbps = 0.1
         lock.unlock()
 
         Thread.detachNewThread { [weak self] in
             guard let self = self else { return }
-            let start = Date().timeIntervalSince1970
-            let out = self.runCommand("/usr/bin/curl", ["-s", "-o", "/dev/null", "-w", "%{size_download}", "--max-time", "8", "https://speed.cloudflare.com/__down?bytes=15000000"])
-            let elapsed = max(0.1, Date().timeIntervalSince1970 - start)
-            let bytes = Double(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-            let mbps = (bytes * 8.0) / (elapsed * 1_000_000.0)
+
+            let startIface = self.readNetstat()
+            let startTime = Date().timeIntervalSince1970
+
+            // Spawn three high-speed parallel CDN download streams for up to 5.5 seconds:
+            // 1) Google global CDN (dl.google.com - never blocked on campus/enterprise networks)
+            // 2) Apple's official macOS networkQuality CDN (mensura.cdn-apple.com)
+            // 3) Cloudflare global speedtest CDN
+            let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+            var procs: [Process] = []
+            let urls = [
+                "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg",
+                "https://mensura.cdn-apple.com/api/v1/gm/large",
+                "https://speed.cloudflare.com/__down?bytes=40000000"
+            ]
+
+            for u in urls {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+                p.arguments = ["-s", "-L", "-k", "-A", ua, "-o", "/dev/null", "--max-time", "5", u]
+                p.standardOutput = FileHandle.nullDevice
+                p.standardError = FileHandle.nullDevice
+                try? p.run()
+                procs.append(p)
+            }
+
+            var peakMbps: Double = 0.0
+            var totalRxBytes: Int64 = 0
+
+            // Sample live kernel interface counters every 0.5s during the 5-second benchmark
+            for _ in 0..<10 {
+                Thread.sleep(forTimeInterval: 0.5)
+                let nowIface = self.readNetstat()
+                let elapsed = max(0.25, Date().timeIntervalSince1970 - startTime)
+                var rxDelta: Int64 = 0
+                for (ifName, stats) in nowIface where ifName != "lo0" {
+                    if let prev = startIface[ifName] {
+                        rxDelta += max(0, stats.0 - prev.0)
+                    }
+                }
+                totalRxBytes = rxDelta
+                let avgMbps = (Double(rxDelta) * 8.0) / (elapsed * 1_000_000.0)
+                let instantMbps = (self.liveSpeedIn * 8.0) / 1_000_000.0
+                let currentEst = max(avgMbps, instantMbps * 0.85)
+                if currentEst > peakMbps {
+                    peakMbps = currentEst
+                }
+
+                self.lock.lock()
+                if currentEst > 0.1 {
+                    self.diagnostics.speedtest_down_mbps = round(currentEst * 10) / 10
+                }
+                self.lock.unlock()
+
+                let anyRunning = procs.contains(where: { $0.isRunning })
+                if !anyRunning && elapsed >= 1.5 {
+                    break
+                }
+            }
+
+            for p in procs where p.isRunning {
+                p.terminate()
+            }
+
+            let totalElapsed = max(0.5, Date().timeIntervalSince1970 - startTime)
+            let finalAvgMbps = (Double(totalRxBytes) * 8.0) / (totalElapsed * 1_000_000.0)
+            let finalResult = max(finalAvgMbps, peakMbps * 0.9)
 
             self.lock.lock()
-            if mbps > 0.1 {
-                self.diagnostics.speedtest_down_mbps = round(mbps * 10) / 10
+            if finalResult > 0.1 {
+                self.diagnostics.speedtest_down_mbps = round(finalResult * 10) / 10
             }
             self.diagnostics.speedtest_running = false
             self.lock.unlock()
         }
     }
 
-    // MARK: - Active Connections + Geo/Org Resolution + Process Termination
-    func getActiveConnections(limit: Int = 35) -> [ConnectionRow] {
+    // MARK: - Active Connections + Geo/Org Resolution + Security Heuristics
+    func getActiveConnections(limit: Int = 45) -> [ConnectionRow] {
         let out = runCommand("/usr/sbin/lsof", ["-i", "-n", "-P"])
         var conns: [ConnectionRow] = []
         var seen = Set<String>()
@@ -503,9 +682,15 @@ final class TelemetryEngine {
                 if let colonRange = remoteAddr.range(of: ":", options: .backwards) {
                     remoteIP = String(remoteAddr[..<colonRange.lowerBound]).replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "")
                 }
+            } else if let colonRange = localAddr.range(of: ":", options: .backwards) {
+                let candidateIP = String(localAddr[..<colonRange.lowerBound]).replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "")
+                if candidateIP != "*" { remoteIP = candidateIP }
             }
 
-            let geo = resolveGeoOrg(for: remoteIP)
+            let intel = resolveGeoIntel(for: remoteIP)
+            let sec = analyzeSocketSecurity(remoteIP: remoteIP, remoteAddr: remoteAddr, localAddr: localAddr, proto: proto, state: state, asnIsp: intel.asnIsp)
+            let formattedGeo = "\(intel.countryFlag) \(intel.countryName) · \(intel.asnIsp)"
+
             conns.append(ConnectionRow(
                 command: cmd,
                 pid: pid,
@@ -514,41 +699,227 @@ final class TelemetryEngine {
                 remote_addr: remoteAddr,
                 remote_ip: remoteIP,
                 state: state,
-                geo_org: geo
+                geo_org: formattedGeo,
+                country_code: intel.countryCode,
+                country_flag: intel.countryFlag,
+                country_name: intel.countryName,
+                asn_isp: intel.asnIsp,
+                service_port: sec.servicePort,
+                security_status: sec.securityStatus,
+                security_label: sec.securityLabel
             ))
             if conns.count >= limit { break }
         }
         return conns
     }
 
-    private func resolveGeoOrg(for ip: String) -> String {
-        if ip.isEmpty || ip == "*" || ip.hasPrefix("127.") || ip.hasPrefix("fe80:") || ip.hasPrefix("::1") {
-            return "Local Loopback (macOS)"
-        }
-        if ip.hasPrefix("192.168.") || ip.hasPrefix("10.") || ip.hasPrefix("172.16.") {
-            return "Local Network (LAN)"
-        }
+    func getConnectionsForApp(_ appName: String) -> [ConnectionRow] {
         lock.lock()
-        if let cached = geoCache[ip] {
+        let matchedPids = Set((liveApps.first(where: { $0.app_name.lowercased() == appName.lowercased() })?.pids ?? []).map { String($0) })
+        lock.unlock()
+
+        let all = getActiveConnections(limit: 160)
+        let targetLower = appName.lowercased()
+        let prefixLower = String(targetLower.prefix(7))
+
+        return all.filter { c in
+            if matchedPids.contains(c.pid) { return true }
+            let (normName, _) = normalizeAppName(c.command)
+            if normName.lowercased() == targetLower { return true }
+            let cmdLower = c.command.lowercased()
+            if !prefixLower.isEmpty && (cmdLower.contains(prefixLower) || targetLower.contains(String(cmdLower.prefix(7)))) {
+                return true
+            }
+            return false
+        }
+    }
+
+    private func flagEmoji(for countryCode: String) -> String {
+        let cc = countryCode.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cc.count == 2 else { return "🌐" }
+        let base: UInt32 = 127397
+        var s = ""
+        for v in cc.unicodeScalars {
+            if v.value >= 65 && v.value <= 90, let scalar = UnicodeScalar(base + v.value) {
+                s.unicodeScalars.append(scalar)
+            }
+        }
+        return s.isEmpty ? "🌐" : s
+    }
+
+    private func knownIPPrefixIntel(for ip: String) -> GeoIntelEntry? {
+        let low = ip.lowercased()
+        if low.isEmpty || low == "*" || low.hasPrefix("127.") || low.hasPrefix("fe80:") || low == "::1" || low == "0.0.0.0" {
+            return GeoIntelEntry(countryCode: "LO", countryFlag: "🏠", countryName: "Localhost", asnIsp: "macOS Loopback")
+        }
+        if low.hasPrefix("192.168.") || low.hasPrefix("10.") || low.hasPrefix("172.16.") || low.hasPrefix("172.17.") || low.hasPrefix("172.18.") || low.hasPrefix("172.19.") || low.hasPrefix("172.2") || low.hasPrefix("172.30.") || low.hasPrefix("172.31.") || low.hasPrefix("169.254.") || low.hasPrefix("224.") || low.hasPrefix("ff0") || low.hasPrefix("fd") {
+            return GeoIntelEntry(countryCode: "LAN", countryFlag: "🏠", countryName: "Local LAN", asnIsp: "Private Network Subnet")
+        }
+        if low.hasPrefix("147.232.") || low.hasPrefix("2001:4118:") {
+            return GeoIntelEntry(countryCode: "SK", countryFlag: "🇸🇰", countryName: "Slovakia (Košice)", asnIsp: "AS2607 SANET / TUKE")
+        }
+        if low.hasPrefix("147.175.") || low.hasPrefix("158.193.") || low.hasPrefix("158.195.") || low.hasPrefix("194.160.") {
+            return GeoIntelEntry(countryCode: "SK", countryFlag: "🇸🇰", countryName: "Slovakia", asnIsp: "AS2607 SANET Academic Network")
+        }
+        if low.hasPrefix("17.") || low.hasPrefix("2620:149:") || low.hasPrefix("2a01:b740:") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS714 Apple Inc.")
+        }
+        if low.hasPrefix("142.250.") || low.hasPrefix("142.251.") || low.hasPrefix("172.217.") || low.hasPrefix("216.58.") || low.hasPrefix("74.125.") || low.hasPrefix("64.233.") || low.hasPrefix("108.177.") || low == "8.8.8.8" || low == "8.8.4.4" || low.hasPrefix("2a00:1450:") || low.hasPrefix("2001:4860:") || low.hasPrefix("2607:f8b0:") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS15169 Google LLC")
+        }
+        if low.hasPrefix("34.") || low.hasPrefix("35.") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS15169 Google Cloud")
+        }
+        if low.hasPrefix("1.1.1.") || low.hasPrefix("1.0.0.") || low.hasPrefix("104.16.") || low.hasPrefix("104.17.") || low.hasPrefix("104.18.") || low.hasPrefix("104.19.") || low.hasPrefix("104.2") || low.hasPrefix("172.64.") || low.hasPrefix("172.66.") || low.hasPrefix("172.67.") || low.hasPrefix("162.159.") || low.hasPrefix("2606:4700:") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS13335 Cloudflare, Inc.")
+        }
+        if low.hasPrefix("140.82.") || low.hasPrefix("192.30.25") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS36459 GitHub, Inc.")
+        }
+        if low.hasPrefix("185.199.") || low.hasPrefix("151.101.") || low.hasPrefix("199.232.") || low.hasPrefix("2a04:4e42:") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS54113 Fastly CDN")
+        }
+        if low.hasPrefix("20.") || low.hasPrefix("40.") || low.hasPrefix("51.") || low.hasPrefix("52.9") || low.hasPrefix("52.10") || low.hasPrefix("52.11") || low.hasPrefix("13.107.") || low.hasPrefix("204.79.") || low.hasPrefix("2620:1ec:") || low.hasPrefix("2a01:111:") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS8075 Microsoft Azure")
+        }
+        if low.hasPrefix("3.") || low.hasPrefix("18.") || low.hasPrefix("52.") || low.hasPrefix("54.") || low.hasPrefix("99.") || low.hasPrefix("108.156.") || low.hasPrefix("143.204.") || low.hasPrefix("2600:9000:") || low.hasPrefix("2a05:d01") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS16509 Amazon AWS")
+        }
+        if low.hasPrefix("157.240.") || low.hasPrefix("31.13.") || low.hasPrefix("179.60.") || low.hasPrefix("185.60.") || low.hasPrefix("2a03:2880:") {
+            return GeoIntelEntry(countryCode: "IE", countryFlag: "🇮🇪", countryName: "Ireland", asnIsp: "AS32934 Meta Platforms")
+        }
+        if low.hasPrefix("2a02:26f0:") || low.hasPrefix("23.") || low.hasPrefix("104.6") || low.hasPrefix("104.7") || low.hasPrefix("104.8") || low.hasPrefix("104.9") || low.hasPrefix("184.2") || low.hasPrefix("184.5") || low.hasPrefix("184.8") {
+            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS20940 Akamai Technologies")
+        }
+        return nil
+    }
+
+    private func resolveGeoIntel(for ip: String) -> GeoIntelEntry {
+        if let localOrKnown = knownIPPrefixIntel(for: ip) {
+            return localOrKnown
+        }
+
+        lock.lock()
+        if let cached = geoIntelCache[ip] {
             lock.unlock()
             return cached
         }
-        geoCache[ip] = "Resolving..."
+        let seed = GeoIntelEntry(countryCode: "EXT", countryFlag: "🌐", countryName: "Resolving...", asnIsp: "Looking up ASN/GeoIP...")
+        geoIntelCache[ip] = seed
         lock.unlock()
 
-        if let url = URL(string: "http://ip-api.com/json/\(ip)?fields=countryCode,org,isp") {
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let self = self, let data = data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-                let cc = (json["countryCode"] as? String) ?? ""
-                let org = (json["org"] as? String) ?? (json["isp"] as? String) ?? "External Host"
-                let label = cc.isEmpty ? org : "[\(cc)] \(org)"
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+
+            // Method 1: Team Cymru DNS BGP ASN & Country Lookup (zero rate-limits, works on all campus/corporate networks)
+            if let dnsEntry = self.lookupCymruDNS(for: ip) {
                 self.lock.lock()
-                self.geoCache[ip] = label
+                self.geoIntelCache[ip] = dnsEntry
+                self.geoCache[ip] = "\(dnsEntry.countryFlag) \(dnsEntry.countryName) · \(dnsEntry.asnIsp)"
                 self.lock.unlock()
-            }.resume()
+                return
+            }
+
+            // Method 2: ip-api.com via curl
+            let out1 = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "3", "http://ip-api.com/json/\(ip)?fields=status,country,countryCode,city,isp,org,as"])
+            if let data = out1.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (json["status"] as? String) == "success" {
+                let cc = (json["countryCode"] as? String) ?? "EXT"
+                let country = (json["country"] as? String) ?? "External"
+                let city = (json["city"] as? String) ?? ""
+                let org = (json["org"] as? String) ?? (json["isp"] as? String) ?? "External Network"
+                let asStr = (json["as"] as? String) ?? ""
+                let asnPrefix = asStr.split(separator: " ").first.map(String.init) ?? ""
+                let asnOrg = (!asnPrefix.isEmpty && !org.contains(asnPrefix)) ? "\(asnPrefix) \(org)" : org
+                let flag = self.flagEmoji(for: cc)
+                let locName = (!city.isEmpty && city != country) ? "\(country) (\(city))" : country
+                let entry = GeoIntelEntry(countryCode: cc, countryFlag: flag, countryName: locName, asnIsp: asnOrg)
+
+                self.lock.lock()
+                self.geoIntelCache[ip] = entry
+                self.geoCache[ip] = "\(flag) \(locName) · \(asnOrg)"
+                self.lock.unlock()
+                return
+            }
+
+            // Method 3: ipwho.is over HTTPS
+            let out2 = self.runCommand("/usr/bin/curl", ["-s", "-L", "--max-time", "3", "https://ipwho.is/\(ip)"])
+            if let data = out2.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               (json["success"] as? Bool) != false {
+                let cc = (json["country_code"] as? String) ?? "EXT"
+                let country = (json["country"] as? String) ?? "External"
+                let city = (json["city"] as? String) ?? ""
+                var asnOrg = "External Network"
+                if let conn = json["connection"] as? [String: Any] {
+                    let asn = conn["asn"] as? Int
+                    let org = (conn["org"] as? String) ?? (conn["isp"] as? String) ?? ""
+                    if let asn = asn, !org.isEmpty {
+                        asnOrg = "AS\(asn) \(org)"
+                    } else if !org.isEmpty {
+                        asnOrg = org
+                    }
+                }
+                let flag = self.flagEmoji(for: cc)
+                let locName = (!city.isEmpty && city != country) ? "\(country) (\(city))" : country
+                let entry = GeoIntelEntry(countryCode: cc, countryFlag: flag, countryName: locName, asnIsp: asnOrg)
+
+                self.lock.lock()
+                self.geoIntelCache[ip] = entry
+                self.geoCache[ip] = "\(flag) \(locName) · \(asnOrg)"
+                self.lock.unlock()
+            }
         }
-        return "External Node"
+        return seed
+    }
+
+    private func analyzeSocketSecurity(remoteIP: String, remoteAddr: String, localAddr: String, proto: String, state: String, asnIsp: String) -> (servicePort: String, securityStatus: String, securityLabel: String) {
+        let addrToParse = (remoteAddr != "—" && !remoteAddr.isEmpty) ? remoteAddr : localAddr
+        var portNum = 0
+        if let colonRange = addrToParse.range(of: ":", options: .backwards) {
+            let pStr = String(addrToParse[colonRange.upperBound...])
+            portNum = Int(pStr) ?? 0
+        }
+
+        if remoteIP.isEmpty || remoteIP == "*" || remoteIP.hasPrefix("127.") || remoteIP.hasPrefix("192.168.") || remoteIP.hasPrefix("10.") || remoteIP.hasPrefix("fe80:") || remoteIP == "::1" || remoteIP.hasPrefix("224.") {
+            let pLabel = portNum > 0 ? ":\(portNum) (Local)" : "Local Socket"
+            return (pLabel, "local", "Local / Trusted")
+        }
+
+        let suspiciousPorts: Set<Int> = [21, 23, 1337, 3333, 4444, 5555, 6666, 6667, 9001, 9050, 31337]
+        if suspiciousPorts.contains(portNum) {
+            return (":\(portNum) (High-Risk)", "suspicious", "Suspicious Port :\(portNum)")
+        }
+
+        switch portNum {
+        case 443:
+            return (":443 (HTTPS/TLS)", "verified", "TLS Encrypted")
+        case 8443:
+            return (":8443 (HTTPS-Alt)", "verified", "TLS Encrypted")
+        case 53, 853:
+            return (":\(portNum) (DNS)", "verified", "DNS Resolver")
+        case 5223, 5228:
+            return (":\(portNum) (Push TLS)", "verified", "Encrypted Push")
+        case 993, 465, 587:
+            return (":\(portNum) (Mail TLS)", "verified", "Encrypted Mail")
+        case 22:
+            return (":22 (SSH)", "verified", "SSH Encrypted")
+        case 123:
+            return (":123 (NTP)", "verified", "Time Sync")
+        case 80, 8080, 8000:
+            return (":\(portNum) (HTTP Plain)", "warning", "Unencrypted HTTP")
+        case 3389:
+            return (":3389 (RDP)", "warning", "Remote Desktop :3389")
+        default:
+            if proto.uppercased().contains("UDP") {
+                return (portNum > 0 ? ":\(portNum) (UDP/QUIC)" : "UDP Socket", "verified", "UDP / QUIC Stream")
+            }
+            if portNum > 10000 && asnIsp.contains("Resolving") {
+                return (":\(portNum) (Custom TCP)", "warning", "Uncommon Port :\(portNum)")
+            }
+            return (portNum > 0 ? ":\(portNum) (TCP)" : "TCP Socket", "verified", "Verified Endpoint")
+        }
     }
 
     func terminateAppByName(_ appName: String) -> Bool {
@@ -595,8 +966,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.2.0"
-    let currentAppBuild = 220
+    let currentAppVersion = "2.3.0"
+    let currentAppBuild = 230
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }

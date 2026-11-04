@@ -176,10 +176,7 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
             fmt.dateFormat = "yyyy-MM-dd"
             let todayStr = fmt.string(from: Date())
             let hourly = db.queryAppHourlyHistory(appName: appName, dateStr: todayStr)
-            let conns = engine.getActiveConnections(limit: 80).filter {
-                $0.command.lowercased().contains(appName.prefix(8).lowercased()) ||
-                appName.lowercased().contains($0.command.lowercased())
-            }
+            let conns = engine.getConnectionsForApp(appName)
             let dict: [String: Any] = [
                 "app_name": appName,
                 "hourly": encodeToObject(hourly),
@@ -388,6 +385,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateOtherInstances()
+
+        if let resPath = Bundle.main.resourcePath {
+            let icnsPath = (resPath as NSString).appendingPathComponent("AppIcon.icns")
+            if let img = NSImage(contentsOfFile: icnsPath) {
+                NSApp.applicationIconImage = img
+            }
+        }
 
         let startInBackground = CommandLine.arguments.contains("--background")
         NSApp.setActivationPolicy(startInBackground ? .accessory : .regular)

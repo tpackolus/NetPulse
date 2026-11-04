@@ -57,6 +57,13 @@ struct ConnectionRow: Codable {
     let remote_ip: String
     let state: String
     var geo_org: String = "—"
+    var country_code: String = ""
+    var country_flag: String = "🌐"
+    var country_name: String = "—"
+    var asn_isp: String = "—"
+    var service_port: String = "—"
+    var security_status: String = "verified"
+    var security_label: String = "Verified"
 }
 
 struct DiagnosticsInfo: Codable {
@@ -73,12 +80,12 @@ struct DiagnosticsInfo: Codable {
     var db_size_kb: Int64 = 0
     var speedtest_down_mbps: Double = 0
     var speedtest_running: Bool = false
-    var app_version: String = "2.2.0"
-    var latest_version: String = "2.2.0"
+    var app_version: String = "2.3.0"
+    var latest_version: String = "2.3.0"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.2.0)"
+    var update_status: String = "Up to date (v2.3.0)"
     var update_notes: String = ""
 }
 

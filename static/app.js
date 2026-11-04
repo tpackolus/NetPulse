@@ -70,10 +70,12 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchRealtime();
     fetchHistory();
     fetchConnections();
+    setTimeout(fetchConnections, 1500);
+    setTimeout(fetchConnections, 3200);
 
     setInterval(fetchRealtime, 1000);
     setInterval(fetchHistory, 10000);
-    setInterval(fetchConnections, 8000);
+    setInterval(fetchConnections, 4500);
 
     const redrawCharts = () => {
         if (state.realtimeData && !state.realtimePaused) {
@@ -198,9 +200,13 @@ function updateRealtimeUI(data) {
         const stBtn = document.getElementById('runSpeedtestBtn');
         const stVal = document.getElementById('diagSpeedtestVal');
         if (d.speedtest_running) {
-            stVal.textContent = 'Running benchmark...';
+            stVal.textContent = d.speedtest_down_mbps > 0
+                ? `Testing: ${d.speedtest_down_mbps.toFixed(1)} Mbps...`
+                : 'Running benchmark...';
+            stBtn.textContent = 'Testing...';
             stBtn.disabled = true;
         } else {
+            stBtn.textContent = 'Run Speedtest';
             stBtn.disabled = false;
             if (d.speedtest_down_mbps > 0) {
                 stVal.textContent = `Download: ${d.speedtest_down_mbps.toFixed(1)} Mbps`;
@@ -510,25 +516,50 @@ function renderInterfacesList(interfaces) {
     }).join('');
 }
 
+function renderSecurityBadge(status, label) {
+    const cls = status === 'suspicious' ? 'sec-suspicious'
+              : status === 'warning' ? 'sec-warning'
+              : status === 'local' ? 'sec-local'
+              : 'sec-verified';
+    return `<span class="sec-badge ${cls}">${escapeHtml(label || 'Verified')}</span>`;
+}
+
 function renderConnectionsTable(connections) {
     const tbody = document.getElementById('connectionsTableBody');
     if (!connections.length) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">No active connections</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No active connections</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = connections.map(c => `
-        <tr>
-            <td>${escapeHtml(c.command)} <span style="color:#71717a;font-size:0.7rem;">#${c.pid}</span></td>
-            <td><span class="proto-badge">${escapeHtml(c.proto)}</span></td>
-            <td style="font-size:0.72rem;word-break:break-all;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
-            <td style="font-size:0.73rem;color:#a1a1aa;">${escapeHtml(c.geo_org)}</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = connections.map(c => {
+        const flag = c.country_flag || '🌐';
+        const country = c.country_name || 'External';
+        const asn = c.asn_isp || c.geo_org || '—';
+        const portTxt = c.service_port || '';
+        return `
+            <tr>
+                <td><strong>${escapeHtml(c.command)}</strong> <span style="color:#71717a;font-size:0.7rem;">#${c.pid}</span></td>
+                <td>
+                    <span class="proto-badge">${escapeHtml(c.proto)}</span>
+                    <div style="font-size:0.68rem;color:#71717a;margin-top:2px;">${escapeHtml(portTxt)}</div>
+                </td>
+                <td style="font-size:0.72rem;word-break:break-all;font-family:'JetBrains Mono',monospace;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                <td style="font-size:0.73rem;">
+                    <div><span class="geo-flag">${flag}</span> <strong>${escapeHtml(country)}</strong></div>
+                    <div style="font-size:0.69rem;color:#a1a1aa;">${escapeHtml(asn)}</div>
+                </td>
+                <td>${renderSecurityBadge(c.security_status, c.security_label)}</td>
+            </tr>
+        `;
+    }).join('');
 }
+
+let inspectorRefreshTimer = null;
+let currentInspectedApp = null;
 
 // --- App Inspector Modal ---
 async function openAppInspector(appName) {
+    currentInspectedApp = appName;
     document.getElementById('inspectorAppTitle').textContent = `Process Profile: ${appName}`;
     document.getElementById('appDetailModal').classList.remove('hidden');
 
@@ -538,23 +569,88 @@ async function openAppInspector(appName) {
         closeAppInspector();
     };
 
+    await loadAppInspectorData(appName, true);
+    if (inspectorRefreshTimer) clearInterval(inspectorRefreshTimer);
+    inspectorRefreshTimer = setInterval(() => {
+        if (currentInspectedApp) loadAppInspectorData(currentInspectedApp, false);
+    }, 2500);
+}
+
+async function loadAppInspectorData(appName, redrawChart) {
     try {
         const res = await fetch(`netpulse://app/api/app_detail?app=${encodeURIComponent(appName)}`);
         if (!res.ok) return;
         const data = await res.json();
-        drawHistoryChart('appDetailCanvas', data.hourly || []);
+        if (redrawChart) {
+            drawHistoryChart('appDetailCanvas', data.hourly || []);
+        }
 
         const tbody = document.getElementById('inspectorConnBody');
         const conns = data.connections || [];
+
+        // Populate GeoIP & Security Summary Strip
+        const socketCountEl = document.getElementById('inspSocketCount');
+        const countryListEl = document.getElementById('inspCountryList');
+        const orgCountEl = document.getElementById('inspOrgCount');
+        const secStatusEl = document.getElementById('inspSecurityStatus');
+
+        if (socketCountEl) socketCountEl.textContent = `${conns.length} Active`;
+
+        const countrySet = new Set();
+        const orgSet = new Set();
+        let suspiciousCount = 0;
+        let warningCount = 0;
+
+        conns.forEach(c => {
+            const flag = c.country_flag || '🌐';
+            const cc = c.country_code || 'EXT';
+            if (cc !== 'LO' && cc !== 'LAN') {
+                countrySet.add(`${flag} ${cc}`);
+            } else {
+                countrySet.add(`🏠 Local`);
+            }
+            if (c.asn_isp && c.asn_isp !== '—') orgSet.add(c.asn_isp);
+            if (c.security_status === 'suspicious') suspiciousCount++;
+            else if (c.security_status === 'warning') warningCount++;
+        });
+
+        if (countryListEl) {
+            countryListEl.textContent = countrySet.size ? Array.from(countrySet).slice(0, 5).join(' · ') : '—';
+        }
+        if (orgCountEl) {
+            orgCountEl.textContent = `${orgSet.size} Provider${orgSet.size === 1 ? '' : 's'}`;
+        }
+        if (secStatusEl) {
+            if (suspiciousCount > 0) {
+                secStatusEl.textContent = `⚠ ${suspiciousCount} Suspicious Endpoint${suspiciousCount > 1 ? 's' : ''}`;
+                secStatusEl.className = 'sec-text-danger';
+            } else if (warningCount > 0) {
+                secStatusEl.textContent = `⚡ ${warningCount} Unencrypted / Custom Port`;
+                secStatusEl.className = 'sec-text-warn';
+            } else {
+                secStatusEl.textContent = conns.length ? '✓ All Sockets Verified (TLS/Local)' : '✓ Idle / No External Sockets';
+                secStatusEl.className = 'sec-text-ok';
+            }
+        }
+
         if (!conns.length) {
-            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#71717a;">No open sockets for this process</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No open sockets for this process right now</td></tr>`;
         } else {
             tbody.innerHTML = conns.map(c => `
                 <tr>
-                    <td><span class="proto-badge">${escapeHtml(c.proto)}</span></td>
-                    <td>${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
-                    <td>${escapeHtml(c.geo_org)}</td>
-                    <td><span class="state-pill">${escapeHtml(c.state)}</span></td>
+                    <td>
+                        <span class="proto-badge">${escapeHtml(c.proto)}</span>
+                        <div style="font-size:0.68rem;color:#71717a;margin-top:2px;">${escapeHtml(c.service_port || '')}</div>
+                    </td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                    <td><span class="geo-flag">${c.country_flag || '🌐'}</span> <strong>${escapeHtml(c.country_name || 'External')}</strong></td>
+                    <td style="color:#a1a1aa;font-size:0.74rem;">${escapeHtml(c.asn_isp || c.geo_org)}</td>
+                    <td>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            ${renderSecurityBadge(c.security_status, c.security_label)}
+                            <span class="state-pill">${escapeHtml(c.state)}</span>
+                        </div>
+                    </td>
                 </tr>
             `).join('');
         }
@@ -564,12 +660,25 @@ async function openAppInspector(appName) {
 }
 
 function closeAppInspector() {
+    currentInspectedApp = null;
+    if (inspectorRefreshTimer) {
+        clearInterval(inspectorRefreshTimer);
+        inspectorRefreshTimer = null;
+    }
     document.getElementById('appDetailModal').classList.add('hidden');
 }
 
 function triggerSpeedtest() {
+    const stBtn = document.getElementById('runSpeedtestBtn');
+    const stVal = document.getElementById('diagSpeedtestVal');
+    if (stVal) stVal.textContent = 'Running benchmark...';
+    if (stBtn) {
+        stBtn.textContent = 'Testing...';
+        stBtn.disabled = true;
+    }
     postNativeAction({ action: 'run_speedtest' });
-    fetchRealtime();
+    fetch('netpulse://app/api/speedtest').catch(() => {});
+    setTimeout(fetchRealtime, 500);
 }
 
 function revealDatabase() {

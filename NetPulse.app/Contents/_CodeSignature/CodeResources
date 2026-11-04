@@ -4,40 +4,51 @@
 <dict>
 	<key>files</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<data>
+		EKuc5QUpxJdqtdrF+YzOl+DGP5g=
+		</data>
 		<key>Resources/static/app.js</key>
 		<data>
-		+NuPuZDUjMiPUC9lBNPxMvsbeEo=
+		w+MYzLWRLA4BJSEsdkeNvL1yG6Q=
 		</data>
 		<key>Resources/static/index.html</key>
 		<data>
-		xCVVorpR++tf85lHaNfQomsoBXU=
+		JhNcwHRfST7FSE02JyOpM2RBRsA=
 		</data>
 		<key>Resources/static/styles.css</key>
 		<data>
-		XRJyin3tRBlCKutJE++lL8f7K9k=
+		ZPA1LXdsUlv0DVeNQt7TIbbynu8=
 		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			ZiMd9glmMduxvGN84BbFQZ1lOIyVCdIi22eB3Tknny0=
+			</data>
+		</dict>
 		<key>Resources/static/app.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			UH6Uya1B4kj/2SuD+LvM7Zb6w9yyVI5b3rB0FkX4CtA=
+			1TWYBvpeN9wag/zVZkhSiWFwZvfIt89TaL7KZzKM2Mg=
 			</data>
 		</dict>
 		<key>Resources/static/index.html</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			ivsnB/zjXoKnaNR1elxCxesF7sN7yQ8HwAF/nV8mOSA=
+			AWPSuOKx7zTMw1PfLs1QW2dGwVhzsSFJQsfTi6ZYRLg=
 			</data>
 		</dict>
 		<key>Resources/static/styles.css</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			784QBn4nbwtvENU4ptyb/ESo3Orm2/oB6l2oJw80hRg=
+			2LE3sv8JNiChVd/fFZwRboho5BvGZ0IHR2grajsmKPk=
 			</data>
 		</dict>
 	</dict>
