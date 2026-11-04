@@ -530,33 +530,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func setupMainWindow() {
+        // Clear any previously saved stuck/fullscreen window frame so the titlebar and traffic lights are guaranteed visible
+        UserDefaults.standard.removeObject(forKey: "NSWindow Frame NetPulseMainWindowFrame")
+
         let screenRect = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        // Adapt initial size to 90% of current monitor's visible frame (from 13" MacBook to 4K/5K external display)
-        let winWidth = max(760, screenRect.width * 0.90)
-        let winHeight = max(560, screenRect.height * 0.88)
+        // Comfortable centered default window size (84% width x 82% height of visible screen) so top titlebar is clearly visible
+        let winWidth = min(1440, max(780, round(screenRect.width * 0.84)))
+        let winHeight = min(900, max(560, round(screenRect.height * 0.82)))
         let winRect = NSRect(
-            x: screenRect.origin.x + (screenRect.width - winWidth) / 2,
-            y: screenRect.origin.y + (screenRect.height - winHeight) / 2,
+            x: round(screenRect.origin.x + (screenRect.width - winWidth) / 2),
+            y: round(screenRect.origin.y + (screenRect.height - winHeight) / 2),
             width: winWidth,
             height: winHeight
         )
 
-        let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        // Standard native macOS window style WITH visible top titlebar & traffic light buttons (Close ×, Minimize −, Zoom +)
+        let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         mainWindow = NSWindow(contentRect: winRect, styleMask: styleMask, backing: .buffered, defer: false)
-        mainWindow.title = "NetPulse"
-        mainWindow.titleVisibility = .hidden
-        mainWindow.titlebarAppearsTransparent = true
-        mainWindow.collectionBehavior = [.fullScreenPrimary, .managed]
+        mainWindow.title = "NetPulse — Network Telemetry & Bandwidth Analyzer"
+        mainWindow.titleVisibility = .visible
+        mainWindow.titlebarAppearsTransparent = false
+        // Use standard desktop zoom (+ button maximizes/restores window while keeping titlebar & traffic lights visible)
+        mainWindow.collectionBehavior = [.managed, .fullScreenNone]
         mainWindow.appearance = NSAppearance(named: .darkAqua)
         mainWindow.backgroundColor = NSColor(calibratedRed: 0.035, green: 0.035, blue: 0.043, alpha: 1.0)
-        mainWindow.minSize = NSSize(width: 720, height: 520)
-        if !CommandLine.arguments.contains("--capture-screenshots") {
-            mainWindow.setFrameAutosaveName("NetPulseMainWindowFrame")
-        }
+        mainWindow.minSize = NSSize(width: 760, height: 520)
+        mainWindow.standardWindowButton(.closeButton)?.isHidden = false
+        mainWindow.standardWindowButton(.miniaturizeButton)?.isHidden = false
+        mainWindow.standardWindowButton(.zoomButton)?.isHidden = false
         mainWindow.delegate = self
         mainWindow.isReleasedWhenClosed = false
 
-        // Clamp window to visible screen if saved frame was from a larger disconnected external monitor
         if !CommandLine.arguments.contains("--capture-screenshots") {
             fitWindowToCurrentScreenIfNeeded()
         }
@@ -575,7 +579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         config.userContentController.add(NativeActionHandler(appDelegate: self), name: "netpulseNative")
 
         let cssInjection = """
-        .topbar-inner { padding-left: 86px !important; -webkit-user-select: none; }
+        .topbar-inner { -webkit-user-select: none; }
         body { -webkit-user-select: none; }
         td, .metric-val, .kpi-primary, .strip-val, code { -webkit-user-select: text; }
         """
@@ -586,12 +590,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         )
         config.userContentController.addUserScript(script)
 
-        webView = WKWebView(frame: mainWindow.contentView!.bounds, configuration: config)
+        let contentBounds = mainWindow.contentView?.bounds ?? NSRect(x: 0, y: 0, width: winWidth, height: winHeight)
+        webView = WKWebView(frame: contentBounds, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
 
         mainWindow.contentView?.addSubview(webView)
+        mainWindow.center()
         mainWindow.makeKeyAndOrderFront(nil)
 
         if let url = URL(string: "netpulse://app/index.html") {
@@ -599,20 +605,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
     }
 
+    @objc func resetWindowSizeAndCenter() {
+        guard let win = mainWindow else { return }
+        if win.styleMask.contains(.fullScreen) {
+            win.toggleFullScreen(nil)
+        }
+        let screenRect = (win.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let winWidth = min(1440, max(780, round(screenRect.width * 0.84)))
+        let winHeight = min(900, max(560, round(screenRect.height * 0.82)))
+        let newFrame = NSRect(
+            x: round(screenRect.origin.x + (screenRect.width - winWidth) / 2),
+            y: round(screenRect.origin.y + (screenRect.height - winHeight) / 2),
+            width: winWidth,
+            height: winHeight
+        )
+        win.setFrame(newFrame, display: true, animate: true)
+        showMainWindow()
+    }
+
     @objc func screenParametersChanged() {
         fitWindowToCurrentScreenIfNeeded()
     }
 
     private func fitWindowToCurrentScreenIfNeeded() {
-        guard let win = mainWindow, !win.styleMask.contains(.fullScreen) else { return }
+        guard let win = mainWindow else { return }
+        if win.styleMask.contains(.fullScreen) {
+            win.toggleFullScreen(nil)
+        }
         let screenFrame = (win.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         var frame = win.frame
 
-        if frame.width > screenFrame.width {
-            frame.size.width = screenFrame.width * 0.94
+        if frame.width > screenFrame.width * 0.96 {
+            frame.size.width = round(screenFrame.width * 0.86)
         }
-        if frame.height > screenFrame.height {
-            frame.size.height = screenFrame.height * 0.92
+        if frame.height > screenFrame.height * 0.94 {
+            frame.size.height = round(screenFrame.height * 0.84)
         }
         if frame.maxX > screenFrame.maxX {
             frame.origin.x = screenFrame.maxX - frame.width
@@ -626,7 +653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         if frame.minY < screenFrame.minY {
             frame.origin.y = screenFrame.minY
         }
-        win.setFrame(frame, display: true, animate: true)
+        win.setFrame(frame, display: true, animate: false)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -680,6 +707,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let openItem = NSMenuItem(title: "Open NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
+
+        let resetWinItem = NSMenuItem(title: "Reset / Center Window Size", action: #selector(resetWindowSizeAndCenter), keyEquivalent: "0")
+        resetWinItem.target = self
+        menu.addItem(resetWinItem)
 
         let hideBgItem = NSMenuItem(title: "Hide Window (Keep Running in Background)", action: #selector(minimizeToBackground), keyEquivalent: "w")
         hideBgItem.target = self
@@ -806,6 +837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         appMenuItem.submenu = appMenu
 
         appMenu.addItem(withTitle: "Show NetPulse Window", action: #selector(showMainWindow), keyEquivalent: "1")
+        appMenu.addItem(withTitle: "Reset / Center Window Size", action: #selector(resetWindowSizeAndCenter), keyEquivalent: "0")
         appMenu.addItem(withTitle: "Check for Updates...", action: #selector(handleMenuBarUpdateClick), keyEquivalent: "u")
         appMenu.addItem(withTitle: "Reveal Database in Finder", action: #selector(revealDatabase), keyEquivalent: "f")
         appMenu.addItem(NSMenuItem.separator())
@@ -818,8 +850,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         mainMenu.addItem(windowMenuItem)
         let windowMenu = NSMenu(title: "Window")
         windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Close Window to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Reset / Center Window Size", action: #selector(resetWindowSizeAndCenter), keyEquivalent: "0")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom / Maximize", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(withTitle: "Close Window to Background Menu Bar", action: #selector(minimizeToBackground), keyEquivalent: "w")
 
         let editMenuItem = NSMenuItem()
         mainMenu.addItem(editMenuItem)
@@ -835,6 +869,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     @objc func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
         TelemetryEngine.shared.isMainWindowVisible = true
+        fitWindowToCurrentScreenIfNeeded()
         mainWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

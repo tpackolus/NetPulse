@@ -966,8 +966,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.3.1"
-    let currentAppBuild = 231
+    let currentAppVersion = "2.3.2"
+    let currentAppBuild = 232
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }
