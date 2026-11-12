@@ -536,7 +536,7 @@ final class TelemetryEngine {
                     self.diagnostics.isp_org = isp
                 }
                 if self.diagnostics.country_city == "—" || self.diagnostics.country_city.isEmpty {
-                    self.diagnostics.country_city = "\(flag) \(cName)"
+                    self.diagnostics.country_city = cName
                 }
                 self.lock.unlock()
             }
@@ -546,8 +546,6 @@ final class TelemetryEngine {
             if let data = out1.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let query = json["query"] as? String, !query.isEmpty {
-                let cc = (json["countryCode"] as? String) ?? detectedCC
-                let flag = self.flagEmoji(for: cc)
                 let isp = (json["isp"] as? String) ?? (json["org"] as? String) ?? "—"
                 let asStr = (json["as"] as? String) ?? ""
                 let asnPrefix = asStr.split(separator: " ").first.map(String.init) ?? ""
@@ -555,7 +553,7 @@ final class TelemetryEngine {
                 let city = (json["city"] as? String) ?? ""
                 let country = (json["country"] as? String) ?? ""
                 let locParts = [city, country].filter { !$0.isEmpty }.joined(separator: ", ")
-                let loc = locParts.isEmpty ? "—" : "\(flag) \(locParts)"
+                let loc = locParts.isEmpty ? "—" : locParts
 
                 self.lock.lock()
                 self.diagnostics.public_ip = query
@@ -570,8 +568,6 @@ final class TelemetryEngine {
             if let data = out2.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let ip = json["ip"] as? String, !ip.isEmpty {
-                let cc = (json["country_code"] as? String) ?? detectedCC
-                let flag = self.flagEmoji(for: cc)
                 let city = (json["city"] as? String) ?? ""
                 let country = (json["country"] as? String) ?? ""
                 var isp = "—"
@@ -584,7 +580,7 @@ final class TelemetryEngine {
                     }
                 }
                 let locParts = [city, country].filter { !$0.isEmpty }.joined(separator: ", ")
-                let loc = locParts.isEmpty ? "—" : "\(flag) \(locParts)"
+                let loc = locParts.isEmpty ? "—" : locParts
 
                 self.lock.lock()
                 self.diagnostics.public_ip = ip
@@ -768,60 +764,53 @@ final class TelemetryEngine {
 
     private func flagEmoji(for countryCode: String) -> String {
         let cc = countryCode.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cc.count == 2 else { return "🌐" }
-        let base: UInt32 = 127397
-        var s = ""
-        for v in cc.unicodeScalars {
-            if v.value >= 65 && v.value <= 90, let scalar = UnicodeScalar(base + v.value) {
-                s.unicodeScalars.append(scalar)
-            }
-        }
-        return s.isEmpty ? "🌐" : s
+        guard !cc.isEmpty else { return "" }
+        return "[\(cc)]"
     }
 
     private func knownIPPrefixIntel(for ip: String) -> GeoIntelEntry? {
         let low = ip.lowercased()
         if low.isEmpty || low == "*" || low.hasPrefix("127.") || low.hasPrefix("fe80:") || low == "::1" || low == "0.0.0.0" {
-            return GeoIntelEntry(countryCode: "LO", countryFlag: "🏠", countryName: "Localhost", asnIsp: "macOS Loopback")
+            return GeoIntelEntry(countryCode: "LO", countryFlag: "[LO]", countryName: "Localhost", asnIsp: "macOS Loopback")
         }
         if low.hasPrefix("192.168.") || low.hasPrefix("10.") || low.hasPrefix("172.16.") || low.hasPrefix("172.17.") || low.hasPrefix("172.18.") || low.hasPrefix("172.19.") || low.hasPrefix("172.2") || low.hasPrefix("172.30.") || low.hasPrefix("172.31.") || low.hasPrefix("169.254.") || low.hasPrefix("224.") || low.hasPrefix("ff0") || low.hasPrefix("fd") {
-            return GeoIntelEntry(countryCode: "LAN", countryFlag: "🏠", countryName: "Local LAN", asnIsp: "Private Network Subnet")
+            return GeoIntelEntry(countryCode: "LAN", countryFlag: "[LAN]", countryName: "Local LAN", asnIsp: "Private Network Subnet")
         }
         if low.hasPrefix("147.232.") || low.hasPrefix("2001:4118:") {
-            return GeoIntelEntry(countryCode: "SK", countryFlag: "🇸🇰", countryName: "Slovakia (Košice)", asnIsp: "AS2607 SANET / TUKE")
+            return GeoIntelEntry(countryCode: "SK", countryFlag: "[SK]", countryName: "Slovakia (Košice)", asnIsp: "AS2607 SANET / TUKE")
         }
         if low.hasPrefix("147.175.") || low.hasPrefix("158.193.") || low.hasPrefix("158.195.") || low.hasPrefix("194.160.") {
-            return GeoIntelEntry(countryCode: "SK", countryFlag: "🇸🇰", countryName: "Slovakia", asnIsp: "AS2607 SANET Academic Network")
+            return GeoIntelEntry(countryCode: "SK", countryFlag: "[SK]", countryName: "Slovakia", asnIsp: "AS2607 SANET Academic Network")
         }
         if low.hasPrefix("17.") || low.hasPrefix("2620:149:") || low.hasPrefix("2a01:b740:") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS714 Apple Inc.")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS714 Apple Inc.")
         }
         if low.hasPrefix("142.250.") || low.hasPrefix("142.251.") || low.hasPrefix("172.217.") || low.hasPrefix("216.58.") || low.hasPrefix("74.125.") || low.hasPrefix("64.233.") || low.hasPrefix("108.177.") || low == "8.8.8.8" || low == "8.8.4.4" || low.hasPrefix("2a00:1450:") || low.hasPrefix("2001:4860:") || low.hasPrefix("2607:f8b0:") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS15169 Google LLC")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS15169 Google LLC")
         }
         if low.hasPrefix("34.") || low.hasPrefix("35.") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS15169 Google Cloud")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS15169 Google Cloud")
         }
         if low.hasPrefix("1.1.1.") || low.hasPrefix("1.0.0.") || low.hasPrefix("104.16.") || low.hasPrefix("104.17.") || low.hasPrefix("104.18.") || low.hasPrefix("104.19.") || low.hasPrefix("104.2") || low.hasPrefix("172.64.") || low.hasPrefix("172.66.") || low.hasPrefix("172.67.") || low.hasPrefix("162.159.") || low.hasPrefix("2606:4700:") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS13335 Cloudflare, Inc.")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS13335 Cloudflare, Inc.")
         }
         if low.hasPrefix("140.82.") || low.hasPrefix("192.30.25") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS36459 GitHub, Inc.")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS36459 GitHub, Inc.")
         }
         if low.hasPrefix("185.199.") || low.hasPrefix("151.101.") || low.hasPrefix("199.232.") || low.hasPrefix("2a04:4e42:") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS54113 Fastly CDN")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS54113 Fastly CDN")
         }
         if low.hasPrefix("20.") || low.hasPrefix("40.") || low.hasPrefix("51.") || low.hasPrefix("52.9") || low.hasPrefix("52.10") || low.hasPrefix("52.11") || low.hasPrefix("13.107.") || low.hasPrefix("204.79.") || low.hasPrefix("2620:1ec:") || low.hasPrefix("2a01:111:") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS8075 Microsoft Azure")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS8075 Microsoft Azure")
         }
         if low.hasPrefix("3.") || low.hasPrefix("18.") || low.hasPrefix("52.") || low.hasPrefix("54.") || low.hasPrefix("99.") || low.hasPrefix("108.156.") || low.hasPrefix("143.204.") || low.hasPrefix("2600:9000:") || low.hasPrefix("2a05:d01") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS16509 Amazon AWS")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS16509 Amazon AWS")
         }
         if low.hasPrefix("157.240.") || low.hasPrefix("31.13.") || low.hasPrefix("179.60.") || low.hasPrefix("185.60.") || low.hasPrefix("2a03:2880:") {
-            return GeoIntelEntry(countryCode: "IE", countryFlag: "🇮🇪", countryName: "Ireland", asnIsp: "AS32934 Meta Platforms")
+            return GeoIntelEntry(countryCode: "IE", countryFlag: "[IE]", countryName: "Ireland", asnIsp: "AS32934 Meta Platforms")
         }
         if low.hasPrefix("2a02:26f0:") || low.hasPrefix("23.") || low.hasPrefix("104.6") || low.hasPrefix("104.7") || low.hasPrefix("104.8") || low.hasPrefix("104.9") || low.hasPrefix("184.2") || low.hasPrefix("184.5") || low.hasPrefix("184.8") {
-            return GeoIntelEntry(countryCode: "US", countryFlag: "🇺🇸", countryName: "United States", asnIsp: "AS20940 Akamai Technologies")
+            return GeoIntelEntry(countryCode: "US", countryFlag: "[US]", countryName: "United States", asnIsp: "AS20940 Akamai Technologies")
         }
         return nil
     }
@@ -836,7 +825,7 @@ final class TelemetryEngine {
             lock.unlock()
             return cached
         }
-        let seed = GeoIntelEntry(countryCode: "EXT", countryFlag: "🌐", countryName: "Resolving...", asnIsp: "Looking up ASN/GeoIP...")
+        let seed = GeoIntelEntry(countryCode: "EXT", countryFlag: "[EXT]", countryName: "Resolving...", asnIsp: "Looking up ASN/GeoIP...")
         geoIntelCache[ip] = seed
         lock.unlock()
 

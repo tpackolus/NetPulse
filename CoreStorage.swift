@@ -58,7 +58,7 @@ struct ConnectionRow: Codable {
     let state: String
     var geo_org: String = "—"
     var country_code: String = ""
-    var country_flag: String = "🌐"
+    var country_flag: String = ""
     var country_name: String = "—"
     var asn_isp: String = "—"
     var service_port: String = "—"

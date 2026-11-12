@@ -185,7 +185,7 @@ function updateRealtimeUI(data) {
 
     if (data.diagnostics) {
         const d = data.diagnostics;
-        document.getElementById('diagProfile').textContent = '📶 ' + d.network_profile + (d.vpn_active ? ' [VPN]' : '');
+        document.getElementById('diagProfile').textContent = d.network_profile + (d.vpn_active ? ' [VPN]' : '');
         document.getElementById('diagLocalIP').textContent = `Local IP: ${d.local_ip} (Gateway: ${d.router_ip})`;
         const wifiUsageEl = document.getElementById('diagWiFiUsage');
         if (wifiUsageEl && Array.isArray(data.wifi_usage)) {
@@ -441,7 +441,6 @@ function renderWiFiUsageTable(wifiRows) {
             <tr class="${rowClass}">
                 <td>
                     <div class="wifi-ssid-cell">
-                        <span class="wifi-icon">📶</span>
                         <strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong>
                     </div>
                 </td>
@@ -608,7 +607,7 @@ function renderConnectionsTable(connections) {
     }
 
     tbody.innerHTML = connections.map(c => {
-        const flag = c.country_flag || '🌐';
+        const codeTag = c.country_code ? `[${escapeHtml(c.country_code)}] ` : '';
         const country = c.country_name || 'External';
         const asn = c.asn_isp || c.geo_org || '—';
         const portTxt = c.service_port || '';
@@ -621,7 +620,7 @@ function renderConnectionsTable(connections) {
                 </td>
                 <td style="font-size:0.72rem;word-break:break-all;font-family:'JetBrains Mono',monospace;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
                 <td style="font-size:0.73rem;">
-                    <div><span class="geo-flag">${flag}</span> <strong>${escapeHtml(country)}</strong></div>
+                    <div><span style="color:var(--text-muted);font-family:'JetBrains Mono',monospace;font-size:0.68rem;">${codeTag}</span><strong>${escapeHtml(country)}</strong></div>
                     <div style="font-size:0.69rem;color:#a1a1aa;">${escapeHtml(asn)}</div>
                 </td>
                 <td>${renderSecurityBadge(c.security_status, c.security_label)}</td>
@@ -678,12 +677,11 @@ async function loadAppInspectorData(appName, redrawChart) {
         let warningCount = 0;
 
         conns.forEach(c => {
-            const flag = c.country_flag || '🌐';
             const cc = c.country_code || 'EXT';
             if (cc !== 'LO' && cc !== 'LAN') {
-                countrySet.add(`${flag} ${cc}`);
+                countrySet.add(cc);
             } else {
-                countrySet.add(`🏠 Local`);
+                countrySet.add('Local');
             }
             if (c.asn_isp && c.asn_isp !== '—') orgSet.add(c.asn_isp);
             if (c.security_status === 'suspicious') suspiciousCount++;
@@ -698,13 +696,13 @@ async function loadAppInspectorData(appName, redrawChart) {
         }
         if (secStatusEl) {
             if (suspiciousCount > 0) {
-                secStatusEl.textContent = `⚠ ${suspiciousCount} Suspicious Endpoint${suspiciousCount > 1 ? 's' : ''}`;
+                secStatusEl.textContent = `${suspiciousCount} Suspicious Endpoint${suspiciousCount > 1 ? 's' : ''}`;
                 secStatusEl.className = 'sec-text-danger';
             } else if (warningCount > 0) {
-                secStatusEl.textContent = `⚡ ${warningCount} Unencrypted / Custom Port`;
+                secStatusEl.textContent = `${warningCount} Unencrypted / Custom Port`;
                 secStatusEl.className = 'sec-text-warn';
             } else {
-                secStatusEl.textContent = conns.length ? '✓ All Sockets Verified (TLS/Local)' : '✓ Idle / No External Sockets';
+                secStatusEl.textContent = conns.length ? 'All Sockets Verified (TLS/Local)' : 'Idle / No External Sockets';
                 secStatusEl.className = 'sec-text-ok';
             }
         }
@@ -719,7 +717,7 @@ async function loadAppInspectorData(appName, redrawChart) {
                         <div style="font-size:0.68rem;color:#71717a;margin-top:2px;">${escapeHtml(c.service_port || '')}</div>
                     </td>
                     <td style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
-                    <td><span class="geo-flag">${c.country_flag || '🌐'}</span> <strong>${escapeHtml(c.country_name || 'External')}</strong></td>
+                    <td><strong>${escapeHtml(c.country_name || 'External')}</strong></td>
                     <td style="color:#a1a1aa;font-size:0.74rem;">${escapeHtml(c.asn_isp || c.geo_org)}</td>
                     <td>
                         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
