@@ -58,7 +58,7 @@
                     <span id="themeToggleLabel">Light Mode</span>
                 </button>
                 <button class="btn btn-ghost" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click Self-Update">
-                    <span id="topUpdateLabel">v2.3.2 · Update</span>
+                    <span id="topUpdateLabel">v2.3.3 · Update</span>
                 </button>
                 <button class="btn btn-ghost" onclick="revealDatabase()" title="Reveal SQLite Database in Finder">
                     <span>Database</span>
@@ -84,9 +84,10 @@
         <!-- Network Diagnostics, Ping & Storage Bar -->
         <section class="diag-strip">
             <div class="diag-item">
-                <span class="diag-label">NETWORK / PROFILE</span>
+                <span class="diag-label">ACTIVE WI-FI / PROFILE</span>
                 <span class="diag-value" id="diagProfile">Wi-Fi (en0)</span>
                 <span class="diag-sub" id="diagLocalIP">Local IP: —</span>
+                <span class="diag-sub wifi-usage-inline" id="diagWiFiUsage">On this Wi-Fi: Today 0 B · Total 0 B</span>
             </div>
             <div class="diag-item">
                 <span class="diag-label">PUBLIC IP &amp; PROVIDER</span>
@@ -323,6 +324,39 @@
             </details>
         </section>
 
+        <!-- Wi-Fi Networks Data Consumption Section -->
+        <section class="surface-panel">
+            <div class="panel-head">
+                <div class="panel-titles">
+                    <h2 class="section-title">Wi-Fi Networks — Data Consumption by SSID</h2>
+                    <p class="section-subtitle">Automatic per-Wi-Fi bandwidth tracking (Today, This Week, This Month &amp; All-Time total per Wi-Fi network)</p>
+                </div>
+                <div class="segmented-control seg-sm">
+                    <button class="seg-btn active" id="wifiModeUsedBtn" onclick="setWiFiViewMode('used')">Active &amp; Used Wi-Fi</button>
+                    <button class="seg-btn" id="wifiModeAllBtn" onclick="setWiFiViewMode('all')">All Saved Wi-Fi</button>
+                </div>
+            </div>
+
+            <div class="table-container" style="max-height: 270px;">
+                <table class="pro-table">
+                    <thead>
+                        <tr>
+                            <th>Wi-Fi Network (SSID)</th>
+                            <th>Status</th>
+                            <th class="num-col">Today</th>
+                            <th class="num-col">This Week</th>
+                            <th class="num-col">This Month</th>
+                            <th class="num-col">All-Time Download</th>
+                            <th class="num-col">All-Time Upload</th>
+                            <th class="num-col">All-Time Total</th>
+                            <th>Wi-Fi Share</th>
+                        </tr>
+                    </thead>
+                    <tbody id="wifiUsageTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+
         <!-- Bottom Split Layout: Applications & System Interfaces/Sockets -->
         <div class="split-grid">
             <!-- Left: Application Traffic Matrix -->
@@ -465,7 +499,7 @@
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.3.2)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.3.3)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>

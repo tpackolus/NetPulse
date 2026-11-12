@@ -80,13 +80,28 @@ struct DiagnosticsInfo: Codable {
     var db_size_kb: Int64 = 0
     var speedtest_down_mbps: Double = 0
     var speedtest_running: Bool = false
-    var app_version: String = "2.3.2"
-    var latest_version: String = "2.3.2"
+    var app_version: String = "2.3.3"
+    var latest_version: String = "2.3.3"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.3.2)"
+    var update_status: String = "Up to date (v2.3.3)"
     var update_notes: String = ""
+}
+
+struct WiFiUsageRow: Codable {
+    let ssid: String
+    let is_active: Bool
+    let is_saved_only: Bool
+    let today_in: Int64
+    let today_out: Int64
+    let today_total: Int64
+    let week_total: Int64
+    let month_total: Int64
+    let all_in: Int64
+    let all_out: Int64
+    let all_total: Int64
+    let last_seen: String
 }
 
 struct RealtimePoint: Codable {
@@ -525,6 +540,153 @@ final class SQLiteManager {
             let lbl = String(format: "%02d:00", h)
             let (bi, bo) = rawMap[h] ?? (0, 0)
             rows.append(TimelineRow(label: lbl, bytes_in: bi, bytes_out: bo, total: bi + bo))
+        }
+        return rows
+    }
+
+    func attributeGenericWiFiRowsIfNeeded(activeSSID: String) {
+        let genericNames: Set<String> = ["Wi-Fi (en0)", "Wi-Fi / LAN", "Wi-Fi", "—", ""]
+        guard !genericNames.contains(activeSSID) else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        let mergeSQL = """
+            INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
+            SELECT date, ?, SUM(bytes_in), SUM(bytes_out)
+            FROM profile_traffic
+            WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN')
+            GROUP BY date
+            ON CONFLICT(date, profile) DO UPDATE SET
+                bytes_in = profile_traffic.bytes_in + excluded.bytes_in,
+                bytes_out = profile_traffic.bytes_out + excluded.bytes_out;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, mergeSQL, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (activeSSID as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+
+        execSQL("DELETE FROM profile_traffic WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN');")
+    }
+
+    func getWiFiUsage(activeProfile: String, preferredSSIDs: [String] = []) -> [WiFiUsageRow] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let cal = Calendar.current
+        let now = Date()
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let todayStr = fmt.string(from: now)
+
+        let weekday = cal.component(.weekday, from: now)
+        let daysFromMonday = (weekday + 5) % 7
+        let startOfWeekStr = fmt.string(from: cal.date(byAdding: .day, value: -daysFromMonday, to: now)!)
+
+        let comps = cal.dateComponents([.year, .month], from: now)
+        let startOfMonthStr = String(format: "%04d-%02d-01", comps.year ?? 2026, comps.month ?? 1)
+
+        let sql = """
+            SELECT
+                profile,
+                COALESCE(SUM(CASE WHEN date = ? THEN bytes_in ELSE 0 END), 0) AS today_in,
+                COALESCE(SUM(CASE WHEN date = ? THEN bytes_out ELSE 0 END), 0) AS today_out,
+                COALESCE(SUM(CASE WHEN date >= ? THEN bytes_in + bytes_out ELSE 0 END), 0) AS week_total,
+                COALESCE(SUM(CASE WHEN date >= ? THEN bytes_in + bytes_out ELSE 0 END), 0) AS month_total,
+                COALESCE(SUM(bytes_in), 0) AS all_in,
+                COALESCE(SUM(bytes_out), 0) AS all_out,
+                COALESCE(MAX(date), '') AS last_seen
+            FROM profile_traffic
+            GROUP BY profile
+            ORDER BY (SUM(bytes_in) + SUM(bytes_out)) DESC;
+        """
+
+        var rows: [WiFiUsageRow] = []
+        var seenSSIDs = Set<String>()
+        var stmt: OpaquePointer?
+
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (todayStr as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (todayStr as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (startOfWeekStr as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 4, (startOfMonthStr as NSString).utf8String, -1, nil)
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let profPtr = sqlite3_column_text(stmt, 0) else { continue }
+                let ssid = String(cString: profPtr)
+                let tIn = sqlite3_column_int64(stmt, 1)
+                let tOut = sqlite3_column_int64(stmt, 2)
+                let wTot = sqlite3_column_int64(stmt, 3)
+                let mTot = sqlite3_column_int64(stmt, 4)
+                let aIn = sqlite3_column_int64(stmt, 5)
+                let aOut = sqlite3_column_int64(stmt, 6)
+                let lastSeen = sqlite3_column_text(stmt, 7).map { String(cString: $0) } ?? todayStr
+
+                let isActive = (ssid == activeProfile)
+                seenSSIDs.insert(ssid)
+                rows.append(WiFiUsageRow(
+                    ssid: ssid,
+                    is_active: isActive,
+                    is_saved_only: false,
+                    today_in: tIn,
+                    today_out: tOut,
+                    today_total: tIn + tOut,
+                    week_total: wTot,
+                    month_total: mTot,
+                    all_in: aIn,
+                    all_out: aOut,
+                    all_total: aIn + aOut,
+                    last_seen: isActive ? "Active Now" : lastSeen
+                ))
+            }
+        }
+        sqlite3_finalize(stmt)
+
+        let cleanActive = activeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanActive.isEmpty && cleanActive != "—" && !seenSSIDs.contains(cleanActive) {
+            seenSSIDs.insert(cleanActive)
+            rows.insert(WiFiUsageRow(
+                ssid: cleanActive,
+                is_active: true,
+                is_saved_only: false,
+                today_in: 0,
+                today_out: 0,
+                today_total: 0,
+                week_total: 0,
+                month_total: 0,
+                all_in: 0,
+                all_out: 0,
+                all_total: 0,
+                last_seen: "Active Now"
+            ), at: 0)
+        }
+
+        for savedSSID in preferredSSIDs {
+            let trimmed = savedSSID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seenSSIDs.contains(trimmed) else { continue }
+            seenSSIDs.insert(trimmed)
+            rows.append(WiFiUsageRow(
+                ssid: trimmed,
+                is_active: false,
+                is_saved_only: true,
+                today_in: 0,
+                today_out: 0,
+                today_total: 0,
+                week_total: 0,
+                month_total: 0,
+                all_in: 0,
+                all_out: 0,
+                all_total: 0,
+                last_seen: "Saved Wi-Fi"
+            ))
+        }
+
+        rows.sort { a, b in
+            if a.is_active != b.is_active { return a.is_active }
+            if a.is_saved_only != b.is_saved_only { return !a.is_saved_only }
+            return a.all_total > b.all_total
         }
         return rows
     }

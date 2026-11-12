@@ -88,6 +88,11 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
                 spdOut = found.speed_out
             }
 
+            let wifiUsage = db.getWiFiUsage(
+                activeProfile: engine.diagnostics.network_profile,
+                preferredSSIDs: engine.preferredWiFiSSIDs
+            )
+
             let dict: [String: Any] = [
                 "speed_in": spdIn,
                 "speed_out": spdOut,
@@ -97,7 +102,8 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
                 "interfaces": encodeToObject(engine.liveInterfaces),
                 "live_apps": encodeToObject(engine.liveApps),
                 "realtime_history": encodeToObject(engine.realtimeHistory),
-                "diagnostics": encodeToObject(engine.diagnostics)
+                "diagnostics": encodeToObject(engine.diagnostics),
+                "wifi_usage": encodeToObject(wifiUsage)
             ]
             return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
         }
@@ -338,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let todayItem = NSMenuItem(title: "Today: 0 MB", action: nil, keyEquivalent: "")
     let weekItem = NSMenuItem(title: "This Week: 0 MB", action: nil, keyEquivalent: "")
     let monthItem = NSMenuItem(title: "This Month: 0 MB", action: nil, keyEquivalent: "")
+    let wifiItem = NSMenuItem(title: "Wi-Fi: —", action: nil, keyEquivalent: "")
     let pingItem = NSMenuItem(title: "Latency: —", action: nil, keyEquivalent: "")
     let topApp1 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
     let topApp2 = NSMenuItem(title: "—", action: nil, keyEquivalent: "")
@@ -731,6 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         menu.addItem(todayItem)
         menu.addItem(weekItem)
         menu.addItem(monthItem)
+        menu.addItem(wifiItem)
         menu.addItem(pingItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -801,6 +809,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         monthItem.title = "This Month: \(formatBytes(s.this_month.total))  (IN \(formatBytes(s.this_month.bytes_in)) / OUT \(formatBytes(s.this_month.bytes_out)))"
 
         let d = engine.diagnostics
+        let wifiRows = SQLiteManager.shared.getWiFiUsage(activeProfile: d.network_profile, preferredSSIDs: engine.preferredWiFiSSIDs)
+        if let activeWifi = wifiRows.first(where: { $0.is_active }) {
+            wifiItem.title = "Wi-Fi (\(activeWifi.ssid)): Today \(formatBytes(activeWifi.today_total)) | Total \(formatBytes(activeWifi.all_total))"
+        } else {
+            wifiItem.title = "Wi-Fi (\(d.network_profile)): —"
+        }
+
         let rPing = d.ping_router_ms >= 0 ? String(format: "%.1f ms", d.ping_router_ms) : "—"
         let iPing = d.ping_internet_ms >= 0 ? String(format: "%.1f ms", d.ping_internet_ms) : "—"
         pingItem.title = "Latency: Gateway \(rPing) | Internet \(iPing)"

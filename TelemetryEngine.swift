@@ -33,6 +33,7 @@ final class TelemetryEngine {
     }
 
     var diagnostics = DiagnosticsInfo()
+    var preferredWiFiSSIDs: [String] = []
     var geoCache: [String: String] = [:]
     var geoIntelCache: [String: GeoIntelEntry] = [:]
 
@@ -83,6 +84,8 @@ final class TelemetryEngine {
         lock.lock()
         realtimeHistory = initialPoints
         lock.unlock()
+
+        updateLocalNetworkInfo()
 
         Thread.detachNewThread { [weak self] in
             self?.collectorLoop()
@@ -387,22 +390,51 @@ final class TelemetryEngine {
         var router = "—"
         for line in info.components(separatedBy: .newlines) {
             if line.hasPrefix("IP address:") {
-                ip = line.replacingOccurrences(of: "IP address:", with: "").trimmingCharacters(in: .whitespaces)
+                let val = line.replacingOccurrences(of: "IP address:", with: "").trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty && val.lowercased() != "none" { ip = val }
             } else if line.hasPrefix("Router:") {
-                router = line.replacingOccurrences(of: "Router:", with: "").trimmingCharacters(in: .whitespaces)
+                let val = line.replacingOccurrences(of: "Router:", with: "").trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty && val.lowercased() != "none" { router = val }
             }
         }
+
+        // Parse preferred wireless networks (macOS orders this list with the currently connected / most recent SSID first)
+        let prefOut = runCommand("/usr/sbin/networksetup", ["-listpreferredwirelessnetworks", "en0"])
+        var prefList: [String] = []
+        for line in prefOut.components(separatedBy: .newlines) {
+            if line.contains("Preferred networks on") { continue }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                prefList.append(trimmed)
+            }
+        }
+
         let airport = runCommand("/usr/sbin/networksetup", ["-getairportnetwork", "en0"])
         var profile = "Wi-Fi (en0)"
         if airport.contains("Current Wi-Fi Network:") {
             let ssid = airport.replacingOccurrences(of: "Current Wi-Fi Network:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !ssid.isEmpty { profile = ssid }
+            if !ssid.isEmpty && ssid != "<redacted>" {
+                profile = ssid
+            }
         }
+
+        // On modern macOS (Sonoma/Sequoia/26+), -getairportnetwork redacts SSID unless retrieved from preferred networks list when en0 link is active
+        if profile == "Wi-Fi (en0)" {
+            let wifiActive = (ip != "—" && !ip.isEmpty) || runCommand("/usr/sbin/ipconfig", ["getsummary", "en0"]).contains("LinkStatusActive : TRUE")
+            if wifiActive, let currentSSID = prefList.first, !currentSSID.isEmpty {
+                profile = currentSSID
+            } else if !wifiActive {
+                profile = "Ethernet / Offline"
+            }
+        }
+
+        SQLiteManager.shared.attributeGenericWiFiRowsIfNeeded(activeSSID: profile)
 
         lock.lock()
         diagnostics.local_ip = ip
         diagnostics.router_ip = router
         diagnostics.network_profile = profile
+        preferredWiFiSSIDs = Array(prefList.prefix(20))
         lock.unlock()
     }
 
@@ -966,8 +998,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.3.2"
-    let currentAppBuild = 232
+    let currentAppVersion = "2.3.3"
+    let currentAppBuild = 233
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }

@@ -7,6 +7,7 @@ const state = {
     currentPreset: 'today',
     realtimePaused: false,
     appViewMode: 'live',
+    wifiViewMode: 'used',
     theme: 'dark',
     realtimeData: null,
     historyData: null,
@@ -184,8 +185,17 @@ function updateRealtimeUI(data) {
 
     if (data.diagnostics) {
         const d = data.diagnostics;
-        document.getElementById('diagProfile').textContent = d.network_profile + (d.vpn_active ? ' [VPN]' : '');
+        document.getElementById('diagProfile').textContent = '📶 ' + d.network_profile + (d.vpn_active ? ' [VPN]' : '');
         document.getElementById('diagLocalIP').textContent = `Local IP: ${d.local_ip} (Gateway: ${d.router_ip})`;
+        const wifiUsageEl = document.getElementById('diagWiFiUsage');
+        if (wifiUsageEl && Array.isArray(data.wifi_usage)) {
+            const activeWifi = data.wifi_usage.find(w => w.is_active);
+            if (activeWifi) {
+                wifiUsageEl.textContent = `On this Wi-Fi: Today ${formatBytes(activeWifi.today_total)} · Total ${formatBytes(activeWifi.all_total)}`;
+            } else {
+                wifiUsageEl.textContent = `On this Wi-Fi: Today 0 B · Total 0 B`;
+            }
+        }
         document.getElementById('diagPublicIP').textContent = d.public_ip || '—';
         document.getElementById('diagISP').textContent = d.isp_org || '—';
         document.getElementById('diagLocation').textContent = `Location: ${d.country_city || '—'}`;
@@ -285,6 +295,7 @@ function updateRealtimeUI(data) {
     });
 
     renderInterfacesList(data.interfaces || []);
+    renderWiFiUsageTable(data.wifi_usage || []);
 
     if (state.appViewMode === 'live') {
         renderAppTable();
@@ -388,6 +399,71 @@ function setAppViewMode(mode) {
     document.getElementById('appModeHistBtn').classList.toggle('active', mode === 'history');
     document.getElementById('appColSpeed').textContent = mode === 'live' ? 'Rate' : 'Share';
     renderAppTable();
+}
+
+function setWiFiViewMode(mode) {
+    state.wifiViewMode = mode;
+    const usedBtn = document.getElementById('wifiModeUsedBtn');
+    const allBtn = document.getElementById('wifiModeAllBtn');
+    if (usedBtn) usedBtn.classList.toggle('active', mode === 'used');
+    if (allBtn) allBtn.classList.toggle('active', mode === 'all');
+    if (state.realtimeData && state.realtimeData.wifi_usage) {
+        renderWiFiUsageTable(state.realtimeData.wifi_usage);
+    }
+}
+
+function renderWiFiUsageTable(wifiRows) {
+    const tbody = document.getElementById('wifiUsageTableBody');
+    if (!tbody) return;
+
+    let rows = Array.isArray(wifiRows) ? [...wifiRows] : [];
+    if (state.wifiViewMode === 'used') {
+        rows = rows.filter(r => r.is_active || !r.is_saved_only || r.all_total > 0);
+    }
+
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#71717a;">No Wi-Fi usage data recorded yet</td></tr>`;
+        return;
+    }
+
+    const grandTotal = rows.reduce((acc, r) => acc + (r.all_total || 0), 0);
+
+    tbody.innerHTML = rows.map(r => {
+        const pct = grandTotal > 0 ? ((r.all_total / grandTotal) * 100).toFixed(1) : '0.0';
+        const statusBadge = r.is_active
+            ? `<span class="wifi-status-badge wifi-active-badge"><span class="live-dot"></span>CONNECTED</span>`
+            : (r.all_total > 0
+                ? `<span class="wifi-status-badge wifi-recorded-badge">Last: ${escapeHtml(r.last_seen)}</span>`
+                : `<span class="wifi-status-badge wifi-saved-badge">Saved on Mac</span>`);
+
+        const rowClass = r.is_active ? 'wifi-active-row' : '';
+        return `
+            <tr class="${rowClass}">
+                <td>
+                    <div class="wifi-ssid-cell">
+                        <span class="wifi-icon">📶</span>
+                        <strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong>
+                    </div>
+                </td>
+                <td>${statusBadge}</td>
+                <td class="num-col">
+                    <strong style="color:var(--text-primary);">${formatBytes(r.today_total)}</strong>
+                    <div style="font-size:10px;color:var(--text-muted);">↓ ${formatBytes(r.today_in)} · ↑ ${formatBytes(r.today_out)}</div>
+                </td>
+                <td class="num-col">${formatBytes(r.week_total)}</td>
+                <td class="num-col">${formatBytes(r.month_total)}</td>
+                <td class="num-col down-text">${formatBytes(r.all_in)}</td>
+                <td class="num-col up-text">${formatBytes(r.all_out)}</td>
+                <td class="num-col"><strong style="color:var(--text-primary);font-size:13px;">${formatBytes(r.all_total)}</strong></td>
+                <td>
+                    <div class="share-bar-cell">
+                        <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
+                        <span>${pct}%</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function renderTimelineTable(timeline, grandTotal) {

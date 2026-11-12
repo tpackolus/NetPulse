@@ -1291,3 +1291,55 @@ canvas {
     color: #ef4444 !important;
 }
 
+/* Wi-Fi Networks Data Consumption Table & Badges */
+.wifi-usage-inline {
+    color: #10b981 !important;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.wifi-ssid-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.wifi-icon {
+    font-size: 0.95rem;
+}
+
+.wifi-active-row {
+    background: rgba(16, 185, 129, 0.06);
+}
+
+.wifi-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+}
+
+.wifi-active-badge {
+    background: rgba(16, 185, 129, 0.16);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.36);
+}
+
+.wifi-recorded-badge {
+    background: rgba(59, 130, 246, 0.14);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.30);
+}
+
+.wifi-saved-badge {
+    background: rgba(113, 113, 122, 0.14);
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
+}
+
+
