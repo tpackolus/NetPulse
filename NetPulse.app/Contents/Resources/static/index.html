@@ -328,19 +328,24 @@
         <section class="surface-panel">
             <div class="panel-head">
                 <div class="panel-titles">
-                    <h2 class="section-title">Wi-Fi Networks — Data Consumption by SSID</h2>
-                    <p class="section-subtitle">Automatic per-Wi-Fi bandwidth tracking (Today, This Week, This Month &amp; All-Time total per Wi-Fi network)</p>
+                    <h2 class="section-title">Wi-Fi Networks — Data Consumption by SSID (<span id="wifiCountLabel">0</span>)</h2>
+                    <p class="section-subtitle">All Wi-Fi networks connected on this Mac ordered by recent activity &amp; recorded bandwidth consumption</p>
                 </div>
                 <div class="segmented-control seg-sm">
-                    <button class="seg-btn active" id="wifiModeUsedBtn" onclick="setWiFiViewMode('used')">Active &amp; Used Wi-Fi</button>
-                    <button class="seg-btn" id="wifiModeAllBtn" onclick="setWiFiViewMode('all')">All Saved Wi-Fi</button>
+                    <button class="seg-btn active" id="wifiModeAllBtn" onclick="setWiFiViewMode('all')">All Connected Wi-Fi</button>
+                    <button class="seg-btn" id="wifiModeUsedBtn" onclick="setWiFiViewMode('used')">With Traffic Only</button>
                 </div>
             </div>
 
-            <div class="table-container" style="max-height: 270px;">
+            <div class="filter-input-wrap">
+                <input type="text" id="wifiSearchInput" class="input-control search-field" placeholder="Search Wi-Fi network name (e.g., jedlikova17, Zborovna_wifi, eduroam...)" oninput="if (state.realtimeData) renderWiFiUsageTable(state.realtimeData.wifi_usage || [])">
+            </div>
+
+            <div class="table-container" style="max-height: 360px;">
                 <table class="pro-table">
                     <thead>
                         <tr>
+                            <th>#</th>
                             <th>Wi-Fi Network (SSID)</th>
                             <th>Status</th>
                             <th class="num-col">Today</th>

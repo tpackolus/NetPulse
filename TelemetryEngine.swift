@@ -434,7 +434,7 @@ final class TelemetryEngine {
         diagnostics.local_ip = ip
         diagnostics.router_ip = router
         diagnostics.network_profile = profile
-        preferredWiFiSSIDs = Array(prefList.prefix(20))
+        preferredWiFiSSIDs = prefList
         lock.unlock()
     }
 

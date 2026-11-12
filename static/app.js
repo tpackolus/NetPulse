@@ -7,7 +7,7 @@ const state = {
     currentPreset: 'today',
     realtimePaused: false,
     appViewMode: 'live',
-    wifiViewMode: 'used',
+    wifiViewMode: 'all',
     theme: 'dark',
     realtimeData: null,
     historyData: null,
@@ -416,29 +416,41 @@ function renderWiFiUsageTable(wifiRows) {
     const tbody = document.getElementById('wifiUsageTableBody');
     if (!tbody) return;
 
+    const searchInput = document.getElementById('wifiSearchInput');
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
     let rows = Array.isArray(wifiRows) ? [...wifiRows] : [];
     if (state.wifiViewMode === 'used') {
         rows = rows.filter(r => r.is_active || !r.is_saved_only || r.all_total > 0);
     }
+    if (query) {
+        rows = rows.filter(r => (r.ssid || '').toLowerCase().includes(query));
+    }
+
+    const countEl = document.getElementById('wifiCountLabel');
+    if (countEl) {
+        countEl.textContent = rows.length;
+    }
 
     if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#71717a;">No Wi-Fi usage data recorded yet</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#71717a;">No matching Wi-Fi networks found</td></tr>`;
         return;
     }
 
     const grandTotal = rows.reduce((acc, r) => acc + (r.all_total || 0), 0);
 
-    tbody.innerHTML = rows.map(r => {
+    tbody.innerHTML = rows.map((r, idx) => {
         const pct = grandTotal > 0 ? ((r.all_total / grandTotal) * 100).toFixed(1) : '0.0';
         const statusBadge = r.is_active
             ? `<span class="wifi-status-badge wifi-active-badge"><span class="live-dot"></span>CONNECTED</span>`
             : (r.all_total > 0
                 ? `<span class="wifi-status-badge wifi-recorded-badge">Last: ${escapeHtml(r.last_seen)}</span>`
-                : `<span class="wifi-status-badge wifi-saved-badge">Saved on Mac</span>`);
+                : `<span class="wifi-status-badge wifi-saved-badge">${escapeHtml(r.last_seen || 'Saved Wi-Fi')}</span>`);
 
         const rowClass = r.is_active ? 'wifi-active-row' : '';
         return `
             <tr class="${rowClass}">
+                <td style="color:var(--text-muted);width:36px;">${idx + 1}</td>
                 <td>
                     <div class="wifi-ssid-cell">
                         <strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong>

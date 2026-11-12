@@ -663,10 +663,19 @@ final class SQLiteManager {
             ), at: 0)
         }
 
+        var rankMap: [String: Int] = [:]
+        for (idx, savedSSID) in preferredSSIDs.enumerated() {
+            let trimmed = savedSSID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && rankMap[trimmed] == nil {
+                rankMap[trimmed] = idx + 1
+            }
+        }
+
         for savedSSID in preferredSSIDs {
             let trimmed = savedSSID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, !seenSSIDs.contains(trimmed) else { continue }
             seenSSIDs.insert(trimmed)
+            let rnk = rankMap[trimmed] ?? 999
             rows.append(WiFiUsageRow(
                 ssid: trimmed,
                 is_active: false,
@@ -679,14 +688,17 @@ final class SQLiteManager {
                 all_in: 0,
                 all_out: 0,
                 all_total: 0,
-                last_seen: "Saved Wi-Fi"
+                last_seen: "History #\(rnk)"
             ))
         }
 
         rows.sort { a, b in
             if a.is_active != b.is_active { return a.is_active }
             if a.is_saved_only != b.is_saved_only { return !a.is_saved_only }
-            return a.all_total > b.all_total
+            if a.all_total != b.all_total { return a.all_total > b.all_total }
+            let rA = rankMap[a.ssid] ?? 9999
+            let rB = rankMap[b.ssid] ?? 9999
+            return rA < rB
         }
         return rows
     }
