@@ -96,23 +96,56 @@ final class TelemetryEngine {
     }
 
     private func runCommand(_ launchPath: String, _ args: [String], timeout: TimeInterval = 3.0) -> String {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: launchPath)
-        proc.arguments = args
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        proc.standardInput = FileHandle.nullDevice
+        return autoreleasepool {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: launchPath)
+            proc.arguments = args
+            let pipe = Pipe()
+            let readHandle = pipe.fileHandleForReading
+            let writeHandle = pipe.fileHandleForWriting
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+            proc.standardInput = FileHandle.nullDevice
 
-        do {
-            try proc.run()
-        } catch {
-            return ""
+            do {
+                try proc.run()
+            } catch {
+                try? readHandle.close()
+                try? writeHandle.close()
+                return ""
+            }
+
+            try? writeHandle.close()
+            let data = readHandle.readDataToEndOfFile()
+            try? readHandle.close()
+            proc.waitUntilExit()
+            return String(data: data, encoding: .utf8) ?? ""
         }
+    }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+    private func getInterfaceIPv4(_ targetName: String) -> String? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr: UnsafeMutablePointer<ifaddrs>? = firstAddr
+        while let current = ptr {
+            let interface = current.pointee
+            let name = String(cString: interface.ifa_name)
+            if name == targetName,
+               let addr = interface.ifa_addr,
+               addr.pointee.sa_family == UInt8(AF_INET) {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(addr, socklen_t(addr.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    let ip = String(cString: hostname)
+                    if !ip.isEmpty && !ip.hasPrefix("169.254.") {
+                        return ip
+                    }
+                }
+            }
+            ptr = interface.ifa_next
+        }
+        return nil
     }
 
     private func discoverHardwarePorts() {
@@ -223,145 +256,147 @@ final class TelemetryEngine {
 
         while running {
             Thread.sleep(forTimeInterval: 1.0)
-            let now = Date()
-            let nowTs = now.timeIntervalSince1970
-            let dt = max(0.2, nowTs - prevTime)
-            prevTime = nowTs
-            tickCount += 1
+            autoreleasepool {
+                let now = Date()
+                let nowTs = now.timeIntervalSince1970
+                let dt = max(0.2, nowTs - prevTime)
+                prevTime = nowTs
+                tickCount += 1
 
-            let currIface = readNetstat()
-            // Eco-Smart polling: every 3s when window is open, every 15s when closed in Menu Bar
-            let appInterval = isMainWindowVisible ? 3 : 15
-            let updateApps = (tickCount % appInterval == 0) || prevApps.isEmpty
-            let currApps = updateApps ? readNettop() : prevApps
+                let currIface = readNetstat()
+                // Eco-Smart polling: every 3s when window is open, every 15s when closed in Menu Bar
+                let appInterval = isMainWindowVisible ? 3 : 15
+                let updateApps = (tickCount % appInterval == 0) || prevApps.isEmpty
+                let currApps = updateApps ? readNettop() : prevApps
 
-            var ifaceDeltas: [String: (Int64, Int64, Int64, Int64)] = [:]
-            var totalDeltaIn: Int64 = 0
-            var totalDeltaOut: Int64 = 0
-            var newIfaces: [InterfaceRow] = []
-            var vpnActive = false
+                var ifaceDeltas: [String: (Int64, Int64, Int64, Int64)] = [:]
+                var totalDeltaIn: Int64 = 0
+                var totalDeltaOut: Int64 = 0
+                var newIfaces: [InterfaceRow] = []
+                var vpnActive = false
 
-            for (iface, (bi, bo, pi, po)) in currIface {
-                let prev = prevIface[iface] ?? (bi, bo, pi, po)
-                var dBi = max(0, bi - prev.0)
-                var dBo = max(0, bo - prev.1)
-                let dPi = max(0, pi - prev.2)
-                let dPo = max(0, po - prev.3)
+                for (iface, (bi, bo, pi, po)) in currIface {
+                    let prev = prevIface[iface] ?? (bi, bo, pi, po)
+                    var dBi = max(0, bi - prev.0)
+                    var dBo = max(0, bo - prev.1)
+                    let dPi = max(0, pi - prev.2)
+                    let dPo = max(0, po - prev.3)
 
-                if dBi > 10 * 1024 * 1024 * 1024 || dBo > 10 * 1024 * 1024 * 1024 {
-                    dBi = 0; dBo = 0
-                }
-                ifaceDeltas[iface] = (dBi, dBo, dPi, dPo)
-
-                if iface != "lo0" {
-                    totalDeltaIn += dBi
-                    totalDeltaOut += dBo
-                }
-                if iface.hasPrefix("utun") && (dBi + dBo) > 0 {
-                    vpnActive = true
-                }
-
-                let spdIn = Double(dBi) / dt
-                let spdOut = Double(dBo) / dt
-                if (bi + bo) > 0 {
-                    newIfaces.append(InterfaceRow(
-                        interface: iface,
-                        label: labelForInterface(iface),
-                        speed_in: spdIn,
-                        speed_out: spdOut,
-                        boot_bytes_in: bi,
-                        boot_bytes_out: bo,
-                        boot_total: bi + bo,
-                        is_loopback: iface == "lo0"
-                    ))
-                }
-            }
-            prevIface = currIface
-            newIfaces.sort {
-                if $0.is_loopback != $1.is_loopback { return !$0.is_loopback }
-                let s0 = $0.speed_in + $0.speed_out
-                let s1 = $1.speed_in + $1.speed_out
-                if abs(s0 - s1) > 1 { return s0 > s1 }
-                return $0.boot_total > $1.boot_total
-            }
-
-            var appDeltasGrouped: [String: (Int64, Int64)] = [:]
-            if updateApps {
-                let appDt = max(0.5, nowTs - lastAppSampleTime)
-                lastAppSampleTime = nowTs
-                var appMap: [String: AppRow] = [:]
-
-                for (rawProc, (bi, bo)) in currApps {
-                    var dBi: Int64 = 0
-                    var dBo: Int64 = 0
-                    if let p = prevApps[rawProc] {
-                        dBi = max(0, bi - p.0)
-                        dBo = max(0, bo - p.1)
-                    }
                     if dBi > 10 * 1024 * 1024 * 1024 || dBo > 10 * 1024 * 1024 * 1024 {
                         dBi = 0; dBo = 0
                     }
+                    ifaceDeltas[iface] = (dBi, dBo, dPi, dPo)
 
-                    let (appName, pid) = normalizeAppName(rawProc)
-                    let prevG = appDeltasGrouped[appName] ?? (0, 0)
-                    appDeltasGrouped[appName] = (prevG.0 + dBi, prevG.1 + dBo)
+                    if iface != "lo0" {
+                        totalDeltaIn += dBi
+                        totalDeltaOut += dBo
+                    }
+                    if iface.hasPrefix("utun") && (dBi + dBo) > 0 {
+                        vpnActive = true
+                    }
 
-                    var row = appMap[appName] ?? AppRow(app_name: appName)
-                    row.speed_in += Double(dBi) / appDt
-                    row.speed_out += Double(dBo) / appDt
-                    row.bytes_in += bi
-                    row.bytes_out += bo
-                    row.total += (bi + bo)
-                    if pid > 0 { row.pids.append(pid) }
-                    appMap[appName] = row
+                    let spdIn = Double(dBi) / dt
+                    let spdOut = Double(dBo) / dt
+                    if (bi + bo) > 0 {
+                        newIfaces.append(InterfaceRow(
+                            interface: iface,
+                            label: labelForInterface(iface),
+                            speed_in: spdIn,
+                            speed_out: spdOut,
+                            boot_bytes_in: bi,
+                            boot_bytes_out: bo,
+                            boot_total: bi + bo,
+                            is_loopback: iface == "lo0"
+                        ))
+                    }
                 }
-                prevApps = currApps
-
-                let sortedApps = appMap.values.sorted {
+                prevIface = currIface
+                newIfaces.sort {
+                    if $0.is_loopback != $1.is_loopback { return !$0.is_loopback }
                     let s0 = $0.speed_in + $0.speed_out
                     let s1 = $1.speed_in + $1.speed_out
-                    if abs(s0 - s1) > 10 { return s0 > s1 }
-                    return $0.total > $1.total
+                    if abs(s0 - s1) > 1 { return s0 > s1 }
+                    return $0.boot_total > $1.boot_total
                 }
+
+                var appDeltasGrouped: [String: (Int64, Int64)] = [:]
+                if updateApps {
+                    let appDt = max(0.5, nowTs - lastAppSampleTime)
+                    lastAppSampleTime = nowTs
+                    var appMap: [String: AppRow] = [:]
+
+                    for (rawProc, (bi, bo)) in currApps {
+                        var dBi: Int64 = 0
+                        var dBo: Int64 = 0
+                        if let p = prevApps[rawProc] {
+                            dBi = max(0, bi - p.0)
+                            dBo = max(0, bo - p.1)
+                        }
+                        if dBi > 10 * 1024 * 1024 * 1024 || dBo > 10 * 1024 * 1024 * 1024 {
+                            dBi = 0; dBo = 0
+                        }
+
+                        let (appName, pid) = normalizeAppName(rawProc)
+                        let prevG = appDeltasGrouped[appName] ?? (0, 0)
+                        appDeltasGrouped[appName] = (prevG.0 + dBi, prevG.1 + dBo)
+
+                        var row = appMap[appName] ?? AppRow(app_name: appName)
+                        row.speed_in += Double(dBi) / appDt
+                        row.speed_out += Double(dBo) / appDt
+                        row.bytes_in += bi
+                        row.bytes_out += bo
+                        row.total += (bi + bo)
+                        if pid > 0 { row.pids.append(pid) }
+                        appMap[appName] = row
+                    }
+                    prevApps = currApps
+
+                    let sortedApps = appMap.values.sorted {
+                        let s0 = $0.speed_in + $0.speed_out
+                        let s1 = $1.speed_in + $1.speed_out
+                        if abs(s0 - s1) > 10 { return s0 > s1 }
+                        return $0.total > $1.total
+                    }
+                    lock.lock()
+                    liveApps = Array(sortedApps.prefix(40))
+                    lock.unlock()
+                }
+
+                let spdIn = Double(totalDeltaIn) / dt
+                let spdOut = Double(totalDeltaOut) / dt
+
                 lock.lock()
-                liveApps = Array(sortedApps.prefix(40))
+                liveSpeedIn = spdIn
+                liveSpeedOut = spdOut
+                if spdIn > peakSpeedIn { peakSpeedIn = spdIn }
+                if spdOut > peakSpeedOut { peakSpeedOut = spdOut }
+                liveInterfaces = newIfaces
+                if vpnActive { diagnostics.vpn_active = true }
+
+                realtimeHistory.append(RealtimePoint(
+                    timestamp: Int64(nowTs),
+                    time_str: timeFmt.string(from: now),
+                    speed_in: spdIn,
+                    speed_out: spdOut
+                ))
+                if realtimeHistory.count > 120 {
+                    realtimeHistory.removeFirst(realtimeHistory.count - 120)
+                }
+                let currentProfile = diagnostics.network_profile
+                diagnostics.db_size_kb = SQLiteManager.shared.getDatabaseFileSizeKB()
                 lock.unlock()
+
+                let hour = Calendar.current.component(.hour, from: now)
+                SQLiteManager.shared.recordDelta(
+                    dateStr: dateFmt.string(from: now),
+                    hour: hour,
+                    profile: currentProfile,
+                    ifaceDeltas: ifaceDeltas,
+                    appDeltas: appDeltasGrouped,
+                    totalIn: totalDeltaIn,
+                    totalOut: totalDeltaOut
+                )
             }
-
-            let spdIn = Double(totalDeltaIn) / dt
-            let spdOut = Double(totalDeltaOut) / dt
-
-            lock.lock()
-            liveSpeedIn = spdIn
-            liveSpeedOut = spdOut
-            if spdIn > peakSpeedIn { peakSpeedIn = spdIn }
-            if spdOut > peakSpeedOut { peakSpeedOut = spdOut }
-            liveInterfaces = newIfaces
-            if vpnActive { diagnostics.vpn_active = true }
-
-            realtimeHistory.append(RealtimePoint(
-                timestamp: Int64(nowTs),
-                time_str: timeFmt.string(from: now),
-                speed_in: spdIn,
-                speed_out: spdOut
-            ))
-            if realtimeHistory.count > 120 {
-                realtimeHistory.removeFirst(realtimeHistory.count - 120)
-            }
-            let currentProfile = diagnostics.network_profile
-            diagnostics.db_size_kb = SQLiteManager.shared.getDatabaseFileSizeKB()
-            lock.unlock()
-
-            let hour = Calendar.current.component(.hour, from: now)
-            SQLiteManager.shared.recordDelta(
-                dateStr: dateFmt.string(from: now),
-                hour: hour,
-                profile: currentProfile,
-                ifaceDeltas: ifaceDeltas,
-                appDeltas: appDeltasGrouped,
-                totalIn: totalDeltaIn,
-                totalOut: totalDeltaOut
-            )
         }
     }
 
@@ -369,24 +404,27 @@ final class TelemetryEngine {
     private func diagnosticsLoop() {
         var cycle = 0
         while running {
-            if isMainWindowVisible || cycle % 4 == 0 {
+            autoreleasepool {
+                // Always check active Wi-Fi SSID so switching networks in background or foreground is immediately recorded
                 updateLocalNetworkInfo()
-                updatePingMetrics()
+                if isMainWindowVisible || cycle % 4 == 0 {
+                    updatePingMetrics()
+                }
+                if cycle % 15 == 0 {
+                    updatePublicIPInfo()
+                }
+                if cycle == 0 || cycle % 180 == 0 {
+                    checkForUpdates(manual: false)
+                }
+                cycle += 1
             }
-            if cycle % 15 == 0 {
-                updatePublicIPInfo()
-            }
-            if cycle == 0 || cycle % 180 == 0 {
-                checkForUpdates(manual: false)
-            }
-            cycle += 1
-            Thread.sleep(forTimeInterval: isMainWindowVisible ? 6.0 : 15.0)
+            Thread.sleep(forTimeInterval: isMainWindowVisible ? 5.0 : 12.0)
         }
     }
 
     private func updateLocalNetworkInfo() {
         let info = runCommand("/usr/sbin/networksetup", ["-getinfo", "Wi-Fi"])
-        var ip = "—"
+        var ip = getInterfaceIPv4("en0") ?? "—"
         var router = "—"
         for line in info.components(separatedBy: .newlines) {
             if line.hasPrefix("IP address:") {
@@ -409,6 +447,13 @@ final class TelemetryEngine {
             }
         }
 
+        lock.lock()
+        let fallbackPrefList = preferredWiFiSSIDs
+        lock.unlock()
+        if prefList.isEmpty && !fallbackPrefList.isEmpty {
+            prefList = fallbackPrefList
+        }
+
         let airport = runCommand("/usr/sbin/networksetup", ["-getairportnetwork", "en0"])
         var profile = "Wi-Fi (en0)"
         if airport.contains("Current Wi-Fi Network:") {
@@ -424,7 +469,7 @@ final class TelemetryEngine {
             if wifiActive, let currentSSID = prefList.first, !currentSSID.isEmpty {
                 profile = currentSSID
             } else if !wifiActive {
-                profile = "Ethernet / Offline"
+                profile = "Offline"
             }
         }
 
@@ -434,7 +479,9 @@ final class TelemetryEngine {
         diagnostics.local_ip = ip
         diagnostics.router_ip = router
         diagnostics.network_profile = profile
-        preferredWiFiSSIDs = prefList
+        if !prefList.isEmpty {
+            preferredWiFiSSIDs = prefList
+        }
         lock.unlock()
     }
 
@@ -526,7 +573,6 @@ final class TelemetryEngine {
             if !detectedIP.isEmpty {
                 let known = self.knownIPPrefixIntel(for: detectedIP) ?? self.lookupCymruDNS(for: detectedIP)
                 let cc = !detectedCC.isEmpty ? detectedCC : (known?.countryCode ?? "")
-                let flag = self.flagEmoji(for: cc)
                 let cName = known?.countryName ?? self.countryName(for: cc)
                 let isp = known?.asnIsp ?? "Active Internet Gateway"
 
@@ -987,8 +1033,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.3.3"
-    let currentAppBuild = 233
+    let currentAppVersion = "2.3.4"
+    let currentAppBuild = 234
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }

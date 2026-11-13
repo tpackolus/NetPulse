@@ -80,12 +80,12 @@ struct DiagnosticsInfo: Codable {
     var db_size_kb: Int64 = 0
     var speedtest_down_mbps: Double = 0
     var speedtest_running: Bool = false
-    var app_version: String = "2.3.3"
-    var latest_version: String = "2.3.3"
+    var app_version: String = "2.3.4"
+    var latest_version: String = "2.3.4"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.3.3)"
+    var update_status: String = "Up to date (v2.3.4)"
     var update_notes: String = ""
 }
 
@@ -545,7 +545,7 @@ final class SQLiteManager {
     }
 
     func attributeGenericWiFiRowsIfNeeded(activeSSID: String) {
-        let genericNames: Set<String> = ["Wi-Fi (en0)", "Wi-Fi / LAN", "Wi-Fi", "—", ""]
+        let genericNames: Set<String> = ["Wi-Fi (en0)", "Wi-Fi / LAN", "Wi-Fi", "Ethernet / Offline", "—", ""]
         guard !genericNames.contains(activeSSID) else { return }
 
         lock.lock()
@@ -555,7 +555,7 @@ final class SQLiteManager {
             INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
             SELECT date, ?, SUM(bytes_in), SUM(bytes_out)
             FROM profile_traffic
-            WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN')
+            WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN', 'Ethernet / Offline')
             GROUP BY date
             ON CONFLICT(date, profile) DO UPDATE SET
                 bytes_in = profile_traffic.bytes_in + excluded.bytes_in,
@@ -568,7 +568,7 @@ final class SQLiteManager {
         }
         sqlite3_finalize(stmt)
 
-        execSQL("DELETE FROM profile_traffic WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN');")
+        execSQL("DELETE FROM profile_traffic WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN', 'Ethernet / Offline');")
     }
 
     func getWiFiUsage(activeProfile: String, preferredSSIDs: [String] = []) -> [WiFiUsageRow] {

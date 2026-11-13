@@ -1,7 +1,7 @@
 {
-  "version": "2.3.3",
-  "build": 233,
-  "release_date": "2026-11-12",
+  "version": "2.3.4",
+  "build": 234,
+  "release_date": "2026-11-13",
   "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
-  "notes": "v2.3.3 — Added Per-Wi-Fi Network (SSID) Data Consumption Tracker (Today, This Week, This Month & All-Time bandwidth per Wi-Fi SSID) and macOS Sonoma/Sequoia/26+ SSID detection."
+  "notes": "v2.3.4 — Fixed Pipe file descriptor leak in long-running background threads so active Wi-Fi SSID (e.g. Predam_bicykel), all 128 saved Wi-Fi networks, and live processes never drop to Ethernet / Offline."
 }
