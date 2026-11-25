@@ -62,6 +62,7 @@ struct ConnectionRow: Codable {
     var country_name: String = "—"
     var asn_isp: String = "—"
     var service_port: String = "—"
+    var hostname: String = ""
     var security_status: String = "verified"
     var security_label: String = "Verified"
 }
@@ -95,15 +96,17 @@ struct DiagnosticsInfo: Codable {
     var speedtest_jitter_ms: Double = 0
     var speedtest_phase: String = ""
     var speedtest_running: Bool = false
-    // LAN Scanner state
+    // LAN Scanner & Network Tools state
     var lan_scanning: Bool = false
+    var dns_benchmarking: Bool = false
+    var traceroute_running: Bool = false
     // OTA Updater
-    var app_version: String = "2.5.1"
-    var latest_version: String = "2.5.1"
+    var app_version: String = "2.6.0"
+    var latest_version: String = "2.6.0"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.5.1)"
+    var update_status: String = "Up to date (v2.6.0)"
     var update_notes: String = ""
 }
 
@@ -154,6 +157,25 @@ struct LanDeviceRow: Codable {
     let latency_ms: Double
     let is_gateway: Bool
     let is_self: Bool
+}
+
+struct DnsBenchmarkRow: Codable {
+    let provider: String
+    let server_ip: String
+    let avg_ms: Double
+    let min_ms: Double
+    let status: String
+    var is_fastest: Bool = false
+}
+
+struct TracerouteHopRow: Codable {
+    let hop: Int
+    let ip: String
+    let hostname: String
+    let country: String
+    let asn_isp: String
+    let latency_ms: Double
+    let timed_out: Bool
 }
 
 struct RealtimePoint: Codable {
@@ -1075,6 +1097,61 @@ final class SQLiteManager {
         }
         sqlite3_finalize(stmt)
         return res
+    }
+
+    func backupDatabase(to destinationPath: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        try? FileManager.default.removeItem(atPath: destinationPath)
+        let escaped = destinationPath.replacingOccurrences(of: "'", with: "''")
+        var errMsg: UnsafeMutablePointer<CChar>?
+        let rc = sqlite3_exec(db, "VACUUM INTO '\(escaped)';", nil, nil, &errMsg)
+        if let errMsg = errMsg { sqlite3_free(errMsg) }
+        return rc == SQLITE_OK && FileManager.default.fileExists(atPath: destinationPath)
+    }
+
+    func restoreMergeDatabase(from sourcePath: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: sourcePath), sourcePath != dbPath else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        let escaped = sourcePath.replacingOccurrences(of: "'", with: "''")
+        var errMsg: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, "ATTACH DATABASE '\(escaped)' AS import_db;", nil, nil, &errMsg) != SQLITE_OK {
+            if let errMsg = errMsg { sqlite3_free(errMsg) }
+            return false
+        }
+        execSQL("""
+            INSERT INTO interface_traffic (date, hour, interface, bytes_in, bytes_out, packets_in, packets_out)
+            SELECT date, hour, interface, bytes_in, bytes_out, packets_in, packets_out FROM import_db.interface_traffic
+            WHERE true
+            ON CONFLICT(date, hour, interface) DO UPDATE SET
+                bytes_in = MAX(interface_traffic.bytes_in, excluded.bytes_in),
+                bytes_out = MAX(interface_traffic.bytes_out, excluded.bytes_out);
+
+            INSERT INTO app_traffic (date, hour, app_name, bytes_in, bytes_out)
+            SELECT date, hour, app_name, bytes_in, bytes_out FROM import_db.app_traffic
+            WHERE true
+            ON CONFLICT(date, hour, app_name) DO UPDATE SET
+                bytes_in = MAX(app_traffic.bytes_in, excluded.bytes_in),
+                bytes_out = MAX(app_traffic.bytes_out, excluded.bytes_out);
+
+            INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
+            SELECT date, profile, bytes_in, bytes_out FROM import_db.profile_traffic
+            WHERE true
+            ON CONFLICT(date, profile) DO UPDATE SET
+                bytes_in = MAX(profile_traffic.bytes_in, excluded.bytes_in),
+                bytes_out = MAX(profile_traffic.bytes_out, excluded.bytes_out);
+        """)
+        execSQL("""
+            INSERT INTO wifi_app_traffic (date, profile, app_name, bytes_in, bytes_out)
+            SELECT date, profile, app_name, bytes_in, bytes_out FROM import_db.wifi_app_traffic
+            WHERE true
+            ON CONFLICT(date, profile, app_name) DO UPDATE SET
+                bytes_in = MAX(wifi_app_traffic.bytes_in, excluded.bytes_in),
+                bytes_out = MAX(wifi_app_traffic.bytes_out, excluded.bytes_out);
+        """)
+        execSQL("DETACH DATABASE import_db;")
+        return true
     }
 
     func updateSettings(_ dict: [String: String]) {

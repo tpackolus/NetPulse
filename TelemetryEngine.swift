@@ -37,6 +37,10 @@ final class TelemetryEngine {
     var diagnostics = DiagnosticsInfo()
     var preferredWiFiSSIDs: [String] = []
     var lanDevices: [LanDeviceRow] = []
+    var dnsBenchmarkResults: [DnsBenchmarkRow] = []
+    var tracerouteHops: [TracerouteHopRow] = []
+    var tracerouteTarget: String = "1.1.1.1"
+    var ptrHostnameCache: [String: String] = [:]
     var geoCache: [String: String] = [:]
     var geoIntelCache: [String: GeoIntelEntry] = [:]
 
@@ -1189,6 +1193,207 @@ final class TelemetryEngine {
         }
     }
 
+    // MARK: - Zero-Subprocess Reverse DNS (PTR) Hostname Lookup + DNS Benchmark & Traceroute
+    private func lookupPTRSync(_ ip: String) -> String {
+        let trimmed = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "*", trimmed != "0.0.0.0", !trimmed.hasPrefix("127.") else { return "" }
+        if trimmed.contains(":") {
+            var addr6 = sockaddr_in6()
+            addr6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            addr6.sin6_family = sa_family_t(AF_INET6)
+            guard trimmed.withCString({ inet_pton(AF_INET6, $0, &addr6.sin6_addr) }) == 1 else { return "" }
+            var hostBuf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let rc = withUnsafePointer(to: &addr6) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
+                    getnameinfo(saPtr, socklen_t(MemoryLayout<sockaddr_in6>.size), &hostBuf, socklen_t(hostBuf.count), nil, 0, NI_NAMEREQD)
+                }
+            }
+            return rc == 0 ? String(cString: hostBuf) : ""
+        } else {
+            var addr4 = sockaddr_in()
+            addr4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            addr4.sin_family = sa_family_t(AF_INET)
+            guard trimmed.withCString({ inet_pton(AF_INET, $0, &addr4.sin_addr) }) == 1 else { return "" }
+            var hostBuf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let rc = withUnsafePointer(to: &addr4) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
+                    getnameinfo(saPtr, socklen_t(MemoryLayout<sockaddr_in>.size), &hostBuf, socklen_t(hostBuf.count), nil, 0, NI_NAMEREQD)
+                }
+            }
+            return rc == 0 ? String(cString: hostBuf) : ""
+        }
+    }
+
+    private func resolveHostnameAsync(for ip: String) -> String {
+        guard !ip.isEmpty, ip != "*", ip != "0.0.0.0", !ip.hasPrefix("127."), !ip.hasPrefix("fe80:") else { return "" }
+        lock.lock()
+        if let cached = ptrHostnameCache[ip] {
+            lock.unlock()
+            return cached == "-" ? "" : cached
+        }
+        ptrHostnameCache[ip] = "-"
+        lock.unlock()
+
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+            autoreleasepool {
+                let resolved = self.lookupPTRSync(ip)
+                self.lock.lock()
+                self.ptrHostnameCache[ip] = resolved.isEmpty ? "-" : resolved
+                self.lock.unlock()
+            }
+        }
+        return ""
+    }
+
+    func runDnsBenchmark() {
+        lock.lock()
+        if diagnostics.dns_benchmarking {
+            lock.unlock()
+            return
+        }
+        diagnostics.dns_benchmarking = true
+        let gwIP = diagnostics.router_ip
+        lock.unlock()
+
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+            autoreleasepool {
+                defer {
+                    self.lock.lock()
+                    self.diagnostics.dns_benchmarking = false
+                    self.lock.unlock()
+                }
+
+                var resolvers: [(String, String)] = [
+                    ("Cloudflare Primary", "1.1.1.1"),
+                    ("Cloudflare Secondary", "1.0.0.1"),
+                    ("Google Public DNS", "8.8.8.8"),
+                    ("Quad9 Security DNS", "9.9.9.9"),
+                    ("Cisco OpenDNS", "208.67.222.222")
+                ]
+                if gwIP != "—" && !gwIP.isEmpty && gwIP.contains(".") {
+                    resolvers.insert(("Local Gateway / Router DNS", gwIP), at: 0)
+                }
+
+                let testDomains = ["apple.com", "cloudflare.com", "github.com"]
+                var results: [DnsBenchmarkRow] = []
+
+                for (name, server) in resolvers {
+                    var times: [Double] = []
+                    for dom in testDomains {
+                        let start = Date().timeIntervalSince1970
+                        let out = self.runCommand("/usr/bin/dig", ["@\(server)", dom, "A", "+tries=1", "+time=1", "+stats"])
+                        let wallMs = (Date().timeIntervalSince1970 - start) * 1000.0
+                        if out.contains("status: NOERROR") {
+                            var parsedMs: Double?
+                            for line in out.components(separatedBy: .newlines) where line.contains("Query time:") {
+                                let digits = line.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                                if let v = Double(digits) { parsedMs = max(0.5, v); break }
+                            }
+                            times.append(parsedMs ?? wallMs)
+                        }
+                    }
+
+                    if !times.isEmpty {
+                        let avg = round((times.reduce(0, +) / Double(times.count)) * 10) / 10
+                        let mn = round((times.min() ?? avg) * 10) / 10
+                        results.append(DnsBenchmarkRow(provider: name, server_ip: server, avg_ms: avg, min_ms: mn, status: "Reachable", is_fastest: false))
+                    } else {
+                        results.append(DnsBenchmarkRow(provider: name, server_ip: server, avg_ms: 9999, min_ms: 9999, status: "Timeout / Blocked", is_fastest: false))
+                    }
+                }
+
+                results.sort { $0.avg_ms < $1.avg_ms }
+                if !results.isEmpty && results[0].avg_ms < 9000 {
+                    results[0].is_fastest = true
+                }
+
+                self.lock.lock()
+                self.dnsBenchmarkResults = results
+                self.lock.unlock()
+            }
+        }
+    }
+
+    func runTraceroute(target: String) {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        let cleanTarget = String(target.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.filter { allowed.contains($0) })
+        let finalTarget = cleanTarget.isEmpty ? "1.1.1.1" : cleanTarget
+
+        lock.lock()
+        if diagnostics.traceroute_running {
+            lock.unlock()
+            return
+        }
+        diagnostics.traceroute_running = true
+        tracerouteTarget = finalTarget
+        tracerouteHops = []
+        lock.unlock()
+
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+            autoreleasepool {
+                defer {
+                    self.lock.lock()
+                    self.diagnostics.traceroute_running = false
+                    self.lock.unlock()
+                }
+
+                let out = self.runCommand("/usr/sbin/traceroute", ["-n", "-q", "1", "-w", "1", "-m", "18", finalTarget])
+                var hops: [TracerouteHopRow] = []
+
+                for line in out.components(separatedBy: .newlines) {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.isEmpty || trimmed.lowercased().hasPrefix("traceroute") { continue }
+                    let parts = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+                    guard parts.count >= 2, let hopNum = Int(parts[0]) else { continue }
+
+                    if parts[1] == "*" {
+                        hops.append(TracerouteHopRow(
+                            hop: hopNum,
+                            ip: "*",
+                            hostname: "ICMP Filtered / No Reply",
+                            country: "—",
+                            asn_isp: "—",
+                            latency_ms: -1,
+                            timed_out: true
+                        ))
+                        continue
+                    }
+
+                    let hopIP = parts[1]
+                    var hopMs: Double = -1
+                    for i in 2..<parts.count {
+                        if parts[i] == "ms", let v = Double(parts[i - 1]) {
+                            hopMs = round(v * 10) / 10
+                            break
+                        }
+                    }
+
+                    let ptr = self.lookupPTRSync(hopIP)
+                    let intel = self.knownIPPrefixIntel(for: hopIP) ?? self.lookupCymruDNS(for: hopIP)
+                    let country = intel?.countryName ?? "Transit"
+                    let asn = intel?.asnIsp ?? "Backbone Router"
+
+                    hops.append(TracerouteHopRow(
+                        hop: hopNum,
+                        ip: hopIP,
+                        hostname: ptr.isEmpty ? "—" : ptr,
+                        country: country,
+                        asn_isp: asn,
+                        latency_ms: hopMs,
+                        timed_out: false
+                    ))
+
+                    self.lock.lock()
+                    self.tracerouteHops = hops
+                    self.lock.unlock()
+                }
+            }
+        }
+    }
+
     // MARK: - Active Connections + Geo/Org Resolution + Security Heuristics
     func getActiveConnections(limit: Int = 45) -> [ConnectionRow] {
         let out = runCommand("/usr/sbin/lsof", ["-i", "-n", "-P"])
@@ -1223,6 +1428,7 @@ final class TelemetryEngine {
             }
 
             let intel = resolveGeoIntel(for: remoteIP)
+            let ptrHost = resolveHostnameAsync(for: remoteIP)
             let sec = analyzeSocketSecurity(remoteIP: remoteIP, remoteAddr: remoteAddr, localAddr: localAddr, proto: proto, state: state, asnIsp: intel.asnIsp)
             let formattedGeo = "\(intel.countryFlag) \(intel.countryName) · \(intel.asnIsp)"
 
@@ -1240,6 +1446,7 @@ final class TelemetryEngine {
                 country_name: intel.countryName,
                 asn_isp: intel.asnIsp,
                 service_port: sec.servicePort,
+                hostname: ptrHost,
                 security_status: sec.securityStatus,
                 security_label: sec.securityLabel
             ))
@@ -1494,8 +1701,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.5.1"
-    let currentAppBuild = 251
+    let currentAppVersion = "2.6.0"
+    let currentAppBuild = 260
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }

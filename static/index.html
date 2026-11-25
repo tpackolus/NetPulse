@@ -24,7 +24,7 @@
                         <span class="brand-name">NetPulse</span>
                         <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
                     </div>
-                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.5.1</span>
+                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.6.0</span>
                 </div>
             </div>
 
@@ -88,6 +88,16 @@
                         <span>Speedtest &amp; Outages</span>
                     </span>
                     <kbd class="nav-kbd">6</kbd>
+                </button>
+
+                <button class="nav-item" data-view="tools" onclick="switchView('tools')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                        </svg>
+                        <span>DNS &amp; Traceroute</span>
+                    </span>
+                    <kbd class="nav-kbd">7</kbd>
                 </button>
             </nav>
 
@@ -160,7 +170,7 @@
                     </div>
 
                     <button class="btn btn-ghost btn-sm" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click OTA Update" style="min-width:68px;">
-                        <span id="topUpdateLabel">v2.5.1</span>
+                        <span id="topUpdateLabel">v2.6.0</span>
                     </button>
                 </div>
             </header>
@@ -803,6 +813,75 @@
                         </section>
                     </div>
                 </div>
+
+                <!-- =========================================================
+                     VIEW 7: DNS BENCHMARK & VISUAL TRACEROUTE
+                     ========================================================= -->
+                <div id="view-tools" class="view-pane">
+                    <div class="overview-split">
+                        <!-- Multi-Provider DNS Resolver Benchmark -->
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">DNS Resolver Speed Benchmark</h2>
+                                    <p class="section-subtitle">Compare DNS lookup response time on your active Wi-Fi (Cloudflare, Google, Quad9, OpenDNS &amp; Router)</p>
+                                </div>
+                                <button class="btn btn-primary btn-sm" id="dnsBenchBtn" onclick="triggerDnsBenchmark()">Run DNS Benchmark</button>
+                            </div>
+
+                            <div class="table-container" style="max-height: 440px;">
+                                <table class="pro-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>DNS Provider</th>
+                                            <th>Server IP</th>
+                                            <th class="num-col">Avg / Min</th>
+                                            <th style="width:140px;">Speed</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dnsBenchmarkBody">
+                                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Click "Run DNS Benchmark" to find the fastest DNS server on your Wi-Fi</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <!-- Visual Hop-by-Hop Traceroute -->
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Visual Hop-by-Hop Traceroute</h2>
+                                    <p class="section-subtitle">Trace packet path with Reverse DNS, BGP ASN/ISP &amp; per-hop latency</p>
+                                </div>
+                            </div>
+
+                            <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                                <input type="text" id="tracerouteTargetInput" class="input-control" style="flex:1;min-width:170px;" value="1.1.1.1" placeholder="Target host or IP (e.g. google.com, 1.1.1.1)">
+                                <button class="btn btn-ghost btn-xs" onclick="setTraceTarget('1.1.1.1')">1.1.1.1</button>
+                                <button class="btn btn-ghost btn-xs" onclick="setTraceTarget('google.com')">google.com</button>
+                                <button class="btn btn-ghost btn-xs" onclick="setTraceTarget('github.com')">github.com</button>
+                                <button class="btn btn-primary btn-sm" id="tracerouteRunBtn" onclick="triggerTraceroute()">Trace Route</button>
+                            </div>
+
+                            <div class="table-container" style="max-height: 392px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:42px;">Hop</th>
+                                            <th>Router IP &amp; Hostname</th>
+                                            <th>Country &amp; ASN/ISP</th>
+                                            <th class="num-col">Latency</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tracerouteBody">
+                                        <tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Enter a target host and click "Trace Route"</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -961,7 +1040,7 @@
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.5.1)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.6.0)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>
@@ -969,10 +1048,12 @@
                 </div>
 
                 <div class="storage-info-box">
-                    <span class="strip-label">SQLITE DATABASE LOCATION</span>
+                    <span class="strip-label">SQLITE DATABASE &amp; BACKUP</span>
                     <code id="modalDbPath">~/Library/Application Support/NetPulse/netpulse_data.db</code>
-                    <div style="margin-top:8px;">
+                    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" onclick="revealDatabase()">Reveal in Finder</button>
+                        <button class="btn btn-secondary btn-xs" onclick="backupDatabase()">Export Backup (.db)</button>
+                        <button class="btn btn-ghost btn-xs" onclick="restoreDatabase()">Import / Merge Backup</button>
                     </div>
                 </div>
 

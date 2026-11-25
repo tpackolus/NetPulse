@@ -26,6 +26,10 @@ const VIEW_META = {
     speedtest: {
         title: 'Speedtest & Connection Outages',
         subtitle: 'Bidirectional multi-CDN benchmark, per-Wi-Fi speed history & outage log'
+    },
+    tools: {
+        title: 'DNS Benchmark & Visual Traceroute',
+        subtitle: 'Compare DNS resolver speed on your Wi-Fi & inspect packet hop path'
     }
 };
 
@@ -68,6 +72,8 @@ let currentInspectedApp = null;
 let currentInspectedWifi = null;
 let wasSpeedtestRunning = false;
 let lanPollTimer = null;
+let dnsPollTimer = null;
+let tracePollTimer = null;
 
 function formatBytes(bytes, decimals = 2) {
     if (!bytes || bytes <= 0) return '0 B';
@@ -164,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
         if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
-        const viewMap = { '1': 'overview', '2': 'wifi', '3': 'history', '4': 'apps', '5': 'network', '6': 'speedtest' };
+        const viewMap = { '1': 'overview', '2': 'wifi', '3': 'history', '4': 'apps', '5': 'network', '6': 'speedtest', '7': 'tools' };
         if (viewMap[e.key]) {
             switchView(viewMap[e.key]);
         }
@@ -236,6 +242,9 @@ function switchView(viewName) {
         fetchLanDevices(false);
     } else if (viewName === 'speedtest') {
         fetchSpeedtestAndOutages();
+    } else if (viewName === 'tools') {
+        fetchDnsBenchmark(false);
+        fetchTraceroute(false, '');
     }
     requestAnimationFrame(redrawVisibleCharts);
 }
@@ -807,7 +816,8 @@ async function openWifiInspector(ssid) {
 
         const daily = data.daily || [];
         state.barChartCache['wifiDetailCanvas'] = daily;
-        requestAnimationFrame(() => drawHistoryChart('wifiDetailCanvas', daily));
+        drawHistoryChart('wifiDetailCanvas', daily);
+        setTimeout(() => drawHistoryChart('wifiDetailCanvas', daily), 60);
 
         const apps = data.apps || [];
         const appsBody = document.getElementById('wifiInspectorAppsBody');
@@ -1169,6 +1179,7 @@ function renderConnectionsTable(connections) {
         filtered = filtered.filter(c =>
             (c.command || '').toLowerCase().includes(query) ||
             (c.remote_addr || '').toLowerCase().includes(query) ||
+            (c.hostname || '').toLowerCase().includes(query) ||
             (c.country_name || '').toLowerCase().includes(query) ||
             (c.asn_isp || '').toLowerCase().includes(query)
         );
@@ -1185,6 +1196,7 @@ function renderConnectionsTable(connections) {
         const country = c.country_name || 'External';
         const asn = c.asn_isp || c.geo_org || '—';
         const portTxt = c.service_port || '';
+        const hostHtml = c.hostname ? `<div style="font-size:0.66rem;color:var(--down-color);margin-top:1px;">${escapeHtml(c.hostname)}</div>` : '';
         return `
             <tr>
                 <td><strong>${escapeHtml(c.command)}</strong> <span style="color:var(--text-muted);font-size:0.68rem;">#${escapeHtml(c.pid)}</span></td>
@@ -1192,7 +1204,10 @@ function renderConnectionsTable(connections) {
                     <span class="proto-badge">${escapeHtml(c.proto)}</span>
                     <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(portTxt)}</div>
                 </td>
-                <td style="font-size:0.71rem;word-break:break-all;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                <td style="font-size:0.71rem;word-break:break-all;">
+                    <div>${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</div>
+                    ${hostHtml}
+                </td>
                 <td style="font-size:0.72rem;">
                     <div><span style="color:var(--text-muted);font-size:0.67rem;">${codeTag}</span><strong style="color:var(--text-primary);">${escapeHtml(country)}</strong></div>
                     <div style="font-size:0.68rem;color:var(--text-secondary);">${escapeHtml(asn)}</div>
@@ -1269,13 +1284,21 @@ async function loadAppInspectorData(appName, redrawChart) {
         if (!conns.length) {
             tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No open sockets for this process right now</td></tr>`;
         } else {
-            tbody.innerHTML = conns.map(c => `
+            tbody.innerHTML = conns.map(c => {
+                const hostSub = c.hostname ? `<div style="font-size:0.66rem;color:var(--down-color);margin-top:1px;">${escapeHtml(c.hostname)}</div>` : '';
+                return `
                 <tr>
                     <td>
                         <span class="proto-badge">${escapeHtml(c.proto)}</span>
                         <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(c.service_port || '')}</div>
                     </td>
-                    <td style="font-size:0.73rem;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                    <td style="font-size:0.73rem;">
+                        <div>${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</div>
+                        ${hostSub}
+                    </td>`;
+            }).map((headHtml, i) => {
+                const c = conns[i];
+                return `${headHtml}
                     <td><strong>${escapeHtml(c.country_name || 'External')}</strong></td>
                     <td style="color:var(--text-secondary);font-size:0.73rem;">${escapeHtml(c.asn_isp || c.geo_org)}</td>
                     <td>
@@ -1284,8 +1307,8 @@ async function loadAppInspectorData(appName, redrawChart) {
                             <span class="state-pill">${escapeHtml(c.state)}</span>
                         </div>
                     </td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
         }
     } catch (err) {
         console.error('Inspector error:', err);
@@ -1445,6 +1468,139 @@ function renderLanDevices(devices) {
 
 function revealDatabase() {
     postNativeAction({ action: 'reveal_db' });
+}
+
+function backupDatabase() {
+    postNativeAction({ action: 'backup_db' });
+}
+
+function restoreDatabase() {
+    postNativeAction({ action: 'restore_db' });
+}
+
+// --- DNS Benchmark & Visual Traceroute ---
+function triggerDnsBenchmark() {
+    const btn = document.getElementById('dnsBenchBtn');
+    if (btn) { btn.textContent = 'Benchmarking DNS...'; btn.disabled = true; }
+    showToast('Benchmarking DNS resolvers on active Wi-Fi...');
+    fetchDnsBenchmark(true);
+    if (dnsPollTimer) clearInterval(dnsPollTimer);
+    dnsPollTimer = setInterval(() => fetchDnsBenchmark(false), 800);
+}
+
+async function fetchDnsBenchmark(start) {
+    try {
+        const res = await fetch(`netpulse://app/api/dns_benchmark${start ? '?start=1' : ''}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const btn = document.getElementById('dnsBenchBtn');
+        if (data.running) {
+            if (btn) { btn.textContent = 'Benchmarking DNS...'; btn.disabled = true; }
+        } else {
+            if (btn) { btn.textContent = 'Run DNS Benchmark'; btn.disabled = false; }
+            if (dnsPollTimer) { clearInterval(dnsPollTimer); dnsPollTimer = null; }
+        }
+        if (Array.isArray(data.results) && data.results.length > 0) {
+            renderDnsBenchmark(data.results);
+        }
+    } catch (err) {
+        console.error('DNS benchmark error:', err);
+    }
+}
+
+function renderDnsBenchmark(rows) {
+    const tbody = document.getElementById('dnsBenchmarkBody');
+    if (!tbody) return;
+    const validMax = Math.max(20, ...rows.filter(r => r.avg_ms < 9000).map(r => r.avg_ms));
+    tbody.innerHTML = rows.map((r, idx) => {
+        const ok = r.avg_ms < 9000;
+        const fastestBadge = r.is_fastest ? ` <span class="wifi-status-badge wifi-active-badge">FASTEST</span>` : '';
+        const timeStr = ok ? `<strong>${r.avg_ms.toFixed(1)} ms</strong> <span style="color:var(--text-muted);font-size:0.68rem;">(min ${r.min_ms.toFixed(1)})</span>` : `<span class="sec-text-danger">${escapeHtml(r.status)}</span>`;
+        const barPct = ok ? Math.max(8, Math.min(100, (r.avg_ms / validMax) * 100)) : 0;
+        return `
+            <tr class="${r.is_fastest ? 'wifi-active-row' : ''}">
+                <td style="color:var(--text-muted);">${idx + 1}</td>
+                <td><strong style="color:var(--text-primary);">${escapeHtml(r.provider)}</strong>${fastestBadge}</td>
+                <td>${escapeHtml(r.server_ip)}</td>
+                <td class="num-col">${timeStr}</td>
+                <td>
+                    <div class="share-bar-cell">
+                        <div class="mini-bar" style="width:95px;"><div class="mini-bar-fill" style="width:${barPct}%"></div></div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function setTraceTarget(target) {
+    const input = document.getElementById('tracerouteTargetInput');
+    if (input) input.value = target;
+    triggerTraceroute();
+}
+
+function triggerTraceroute() {
+    const target = (document.getElementById('tracerouteTargetInput').value || '1.1.1.1').trim();
+    const btn = document.getElementById('tracerouteRunBtn');
+    if (btn) { btn.textContent = 'Tracing...'; btn.disabled = true; }
+    document.getElementById('tracerouteBody').innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Tracing hops to ${escapeHtml(target)}...</td></tr>`;
+    fetchTraceroute(true, target);
+    if (tracePollTimer) clearInterval(tracePollTimer);
+    tracePollTimer = setInterval(() => fetchTraceroute(false, ''), 900);
+}
+
+async function fetchTraceroute(start, target) {
+    try {
+        const q = start ? `?start=1&target=${encodeURIComponent(target)}` : '';
+        const res = await fetch(`netpulse://app/api/traceroute${q}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const btn = document.getElementById('tracerouteRunBtn');
+        if (data.running) {
+            if (btn) { btn.textContent = 'Tracing...'; btn.disabled = true; }
+        } else {
+            if (btn) { btn.textContent = 'Trace Route'; btn.disabled = false; }
+            if (tracePollTimer) { clearInterval(tracePollTimer); tracePollTimer = null; }
+        }
+        if (Array.isArray(data.hops) && data.hops.length > 0) {
+            renderTraceroute(data.hops);
+        }
+    } catch (err) {
+        console.error('Traceroute error:', err);
+    }
+}
+
+function renderTraceroute(hops) {
+    const tbody = document.getElementById('tracerouteBody');
+    if (!tbody) return;
+    tbody.innerHTML = hops.map(h => {
+        if (h.timed_out) {
+            return `
+                <tr>
+                    <td style="color:var(--text-muted);">${h.hop}</td>
+                    <td style="color:var(--text-muted);">* (No ICMP reply)</td>
+                    <td style="color:var(--text-muted);">—</td>
+                    <td class="num-col muted-dash">Timeout</td>
+                </tr>
+            `;
+        }
+        const hostLine = (h.hostname && h.hostname !== '—') ? `<div style="font-size:0.66rem;color:var(--down-color);">${escapeHtml(h.hostname)}</div>` : '';
+        const msStr = h.latency_ms >= 0 ? `${h.latency_ms.toFixed(1)} ms` : '—';
+        return `
+            <tr>
+                <td style="color:var(--text-muted);">${h.hop}</td>
+                <td>
+                    <strong>${escapeHtml(h.ip)}</strong>
+                    ${hostLine}
+                </td>
+                <td style="font-size:0.72rem;">
+                    <div><strong style="color:var(--text-primary);">${escapeHtml(h.country)}</strong></div>
+                    <div style="font-size:0.67rem;color:var(--text-secondary);">${escapeHtml(h.asn_isp)}</div>
+                </td>
+                <td class="num-col down-text"><strong>${msStr}</strong></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // --- Interactive Canvas Charts & Crosshair Tooltips ---

@@ -1,7 +1,7 @@
 {
-  "version": "2.5.1",
-  "build": 251,
+  "version": "2.6.0",
+  "build": 260,
   "release_date": "2026-11-25",
   "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
-  "notes": "v2.5.1 — Fixed-width 2-line stacked speed display in both macOS Menu Bar and top header (eliminates width jitter and B/s flickering)."
+  "notes": "v2.6.0 — Added DNS Resolver Benchmark, Visual Hop-by-Hop Traceroute, Reverse DNS (PTR) Hostname resolution on live sockets, 1-Click SQLite Backup/Merge Restore, and updated v2.6.0 screenshots."
 }

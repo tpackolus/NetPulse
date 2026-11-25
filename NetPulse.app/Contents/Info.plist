@@ -13,9 +13,9 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleVersion</key>
-    <string>251</string>
+    <string>260</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.5.1</string>
+    <string>2.6.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSHighResolutionCapable</key>

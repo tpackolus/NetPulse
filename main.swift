@@ -247,6 +247,30 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
             return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
         }
 
+        if path == "/api/dns_benchmark" {
+            if param("start", "") == "1" {
+                engine.runDnsBenchmark()
+            }
+            let dict: [String: Any] = [
+                "running": engine.diagnostics.dns_benchmarking,
+                "results": encodeToObject(engine.dnsBenchmarkResults)
+            ]
+            return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        }
+
+        if path == "/api/traceroute" {
+            if param("start", "") == "1" {
+                let target = param("target", "1.1.1.1")
+                engine.runTraceroute(target: target)
+            }
+            let dict: [String: Any] = [
+                "running": engine.diagnostics.traceroute_running,
+                "target": engine.tracerouteTarget,
+                "hops": encodeToObject(engine.tracerouteHops)
+            ]
+            return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        }
+
         if path == "/api/connections" {
             let conns = engine.getActiveConnections(limit: 50)
             return (try? JSONSerialization.data(withJSONObject: ["connections": encodeToObject(conns)])) ?? Data()
@@ -300,6 +324,39 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
         case "reveal_db":
             let dbURL = URL(fileURLWithPath: SQLiteManager.shared.dbPath)
             NSWorkspace.shared.activateFileViewerSelecting([dbURL])
+
+        case "backup_db":
+            DispatchQueue.main.async {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "yyyy-MM-dd"
+                let savePanel = NSSavePanel()
+                savePanel.nameFieldStringValue = "netpulse_backup_\(fmt.string(from: Date())).db"
+                savePanel.canCreateDirectories = true
+                savePanel.title = "Export NetPulse SQLite Database Backup"
+                savePanel.begin { resp in
+                    if resp == .OK, let url = savePanel.url {
+                        let ok = SQLiteManager.shared.backupDatabase(to: url.path)
+                        let msg = ok ? "Database backup saved successfully" : "Backup failed"
+                        self.appDelegate?.webView?.evaluateJavaScript("showToast('\(msg)');", completionHandler: nil)
+                    }
+                }
+            }
+
+        case "restore_db":
+            DispatchQueue.main.async {
+                let openPanel = NSOpenPanel()
+                openPanel.canChooseFiles = true
+                openPanel.canChooseDirectories = false
+                openPanel.allowsMultipleSelection = false
+                openPanel.title = "Import & Merge NetPulse SQLite Backup (.db)"
+                openPanel.begin { resp in
+                    if resp == .OK, let url = openPanel.url {
+                        let ok = SQLiteManager.shared.restoreMergeDatabase(from: url.path)
+                        let msg = ok ? "Backup merged successfully into SQLite database" : "Invalid or identical database file"
+                        self.appDelegate?.webView?.evaluateJavaScript("fetchRealtime(); fetchHistory(); showToast('\(msg)');", completionHandler: nil)
+                    }
+                }
+            }
 
         case "copy_text":
             if let text = dict["text"] as? String, !text.isEmpty {
@@ -539,68 +596,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let docsDir = "/Users/marosharahus/Downloads/appka/docs"
         try? FileManager.default.createDirectory(atPath: docsDir, withIntermediateDirectories: true)
 
-        // Expand window & webView so the entire dashboard from topbar to bottom tables renders in one full view
-        let fullW: CGFloat = 1440
-        let fullH: CGFloat = 2120
-        let fullRect = NSRect(x: 20, y: 20, width: fullW, height: fullH)
-        mainWindow.setFrame(fullRect, display: true)
-        webView.frame = NSRect(x: 0, y: 0, width: fullW, height: fullH)
+        let snapW: CGFloat = 1440
+        let snapH: CGFloat = 920
+        let snapRect = NSRect(x: 40, y: 40, width: snapW, height: snapH)
+        mainWindow.setFrame(snapRect, display: true)
+        webView.frame = NSRect(x: 0, y: 0, width: snapW, height: snapH)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
-            let prepJS = """
-            const snapStyle = document.createElement('style');
-            snapStyle.textContent = `
-                .realtime-frame { height: 215px !important; }
-                .history-frame { height: 245px !important; }
-                .app-table-height { max-height: 420px !important; }
-                .conn-table-height { max-height: 220px !important; }
-                .iface-stack { max-height: 210px !important; }
-            `;
-            document.head.appendChild(snapStyle);
+            let prepDarkJS = """
             applyTheme('dark');
-            setAppViewMode('history');
+            switchView('overview');
             fetchRealtime();
             fetchHistory();
             fetchConnections();
             """
             self.applyWindowTheme("dark")
-            self.webView.evaluateJavaScript(prepJS) { _, _ in
+            self.webView.evaluateJavaScript(prepDarkJS) { _, _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                     let cfg = WKSnapshotConfiguration()
-                    cfg.rect = NSRect(x: 0, y: 0, width: fullW, height: fullH)
-                    self.webView.takeSnapshot(with: cfg) { img, _ in
-                        if let img = img {
-                            self.saveSnapshotImage(img, to: "\(docsDir)/netpulse-dark.png")
+                    cfg.rect = NSRect(x: 0, y: 0, width: snapW, height: snapH)
+                    self.webView.takeSnapshot(with: cfg) { imgDark, _ in
+                        if let imgDark = imgDark {
+                            self.saveSnapshotImage(imgDark, to: "\(docsDir)/netpulse-dark.png")
                         }
-                        // Switch to Light Mode and capture full Light Mode screenshot
+                        // Switch to Light Mode + Wi-Fi Networks & Signal Quality view
                         self.applyWindowTheme("light")
-                        self.webView.evaluateJavaScript("applyTheme('light'); renderRealtimeChart(); renderHistoryChart(); renderAppTable();") { _, _ in
+                        self.webView.evaluateJavaScript("applyTheme('light'); switchView('wifi');") { _, _ in
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                                 self.webView.takeSnapshot(with: cfg) { imgLight, _ in
                                     if let imgLight = imgLight {
                                         self.saveSnapshotImage(imgLight, to: "\(docsDir)/netpulse-light.png")
                                     }
-                                    // Capture Process Inspector Modal in 1440x920 viewport
-                                    let modalRect = NSRect(x: 40, y: 40, width: 1440, height: 920)
-                                    self.mainWindow.setFrame(modalRect, display: true)
-                                    self.webView.frame = NSRect(x: 0, y: 0, width: 1440, height: 920)
+                                    // Switch back to Dark Mode & open Wi-Fi / Process Inspector Modal
                                     self.applyWindowTheme("dark")
-                                    let openModalJS = """
+                                    let openInspJS = """
                                     applyTheme('dark');
-                                    window.scrollTo(0, 0);
-                                    if (state.historyApps && state.historyApps.length > 0) {
-                                        openAppInspector(state.historyApps[0].app_name);
-                                    } else if (state.liveApps && state.liveApps.length > 0) {
-                                        openAppInspector(state.liveApps[0].app_name);
+                                    switchView('wifi');
+                                    if (state.realtimeData && state.realtimeData.wifi_usage && state.realtimeData.wifi_usage.length > 0) {
+                                        openWifiInspector(state.realtimeData.wifi_usage[0].ssid);
                                     } else {
                                         openLimitsModal();
                                     }
                                     """
-                                    self.webView.evaluateJavaScript(openModalJS) { _, _ in
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                            let modalCfg = WKSnapshotConfiguration()
-                                            modalCfg.rect = NSRect(x: 0, y: 0, width: 1440, height: 920)
-                                            self.webView.takeSnapshot(with: modalCfg) { imgModal, _ in
+                                    self.webView.evaluateJavaScript(openInspJS) { _, _ in
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                                            self.webView.takeSnapshot(with: cfg) { imgModal, _ in
                                                 if let imgModal = imgModal {
                                                     self.saveSnapshotImage(imgModal, to: "\(docsDir)/netpulse-inspector.png")
                                                 }
