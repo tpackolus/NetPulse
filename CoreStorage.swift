@@ -78,14 +78,32 @@ struct DiagnosticsInfo: Codable {
     var vpn_active: Bool = false
     var db_path: String = ""
     var db_size_kb: Int64 = 0
+    // Wi-Fi Radio Telemetry (CoreWLAN)
+    var wifi_rssi: Int = 0
+    var wifi_noise: Int = 0
+    var wifi_snr: Int = 0
+    var wifi_tx_rate: Double = 0
+    var wifi_band: String = "—"
+    var wifi_channel: Int = 0
+    var wifi_width: String = "—"
+    var wifi_standard: String = "—"
+    var wifi_quality_pct: Int = 0
+    // Bidirectional Multi-CDN Speedtest
     var speedtest_down_mbps: Double = 0
+    var speedtest_up_mbps: Double = 0
+    var speedtest_ping_ms: Double = 0
+    var speedtest_jitter_ms: Double = 0
+    var speedtest_phase: String = ""
     var speedtest_running: Bool = false
-    var app_version: String = "2.4.0"
-    var latest_version: String = "2.4.0"
+    // LAN Scanner state
+    var lan_scanning: Bool = false
+    // OTA Updater
+    var app_version: String = "2.5.0"
+    var latest_version: String = "2.5.0"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.4.0)"
+    var update_status: String = "Up to date (v2.5.0)"
     var update_notes: String = ""
 }
 
@@ -93,6 +111,8 @@ struct WiFiUsageRow: Codable {
     let ssid: String
     let is_active: Bool
     let is_saved_only: Bool
+    let is_metered: Bool
+    let limit_gb: Double
     let today_in: Int64
     let today_out: Int64
     let today_total: Int64
@@ -102,6 +122,38 @@ struct WiFiUsageRow: Codable {
     let all_out: Int64
     let all_total: Int64
     let last_seen: String
+}
+
+struct SpeedtestRecord: Codable {
+    let id: Int64
+    let timestamp: Int64
+    let date_str: String
+    let ssid: String
+    let down_mbps: Double
+    let up_mbps: Double
+    let ping_ms: Double
+    let jitter_ms: Double
+}
+
+struct OutageRecord: Codable {
+    let id: Int64
+    let start_ts: Int64
+    let end_ts: Int64
+    let start_str: String
+    let end_str: String
+    let duration_sec: Int
+    let ssid: String
+    let reason: String
+}
+
+struct LanDeviceRow: Codable {
+    let ip: String
+    let mac: String
+    let vendor: String
+    let hostname: String
+    let latency_ms: Double
+    let is_gateway: Bool
+    let is_self: Bool
 }
 
 struct RealtimePoint: Codable {
@@ -191,10 +243,63 @@ final class SQLiteManager {
                 PRIMARY KEY (date, profile)
             );
 
+            CREATE TABLE IF NOT EXISTS wifi_app_traffic (
+                date TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                app_name TEXT NOT NULL,
+                bytes_in INTEGER NOT NULL DEFAULT 0,
+                bytes_out INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, profile, app_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wifi_app_prof ON wifi_app_traffic(profile);
+
+            CREATE TABLE IF NOT EXISTS wifi_limits (
+                ssid TEXT PRIMARY KEY,
+                is_metered INTEGER NOT NULL DEFAULT 0,
+                limit_gb REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS speedtest_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                date_str TEXT NOT NULL,
+                ssid TEXT NOT NULL,
+                down_mbps REAL NOT NULL DEFAULT 0,
+                up_mbps REAL NOT NULL DEFAULT 0,
+                ping_ms REAL NOT NULL DEFAULT 0,
+                jitter_ms REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS outage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_ts INTEGER NOT NULL,
+                end_ts INTEGER NOT NULL,
+                start_str TEXT NOT NULL,
+                end_str TEXT NOT NULL,
+                duration_sec INTEGER NOT NULL,
+                ssid TEXT NOT NULL,
+                reason TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+        """)
+
+        // Backfill wifi_app_traffic once for historical single-SSID days if table is empty
+        execSQL("""
+            INSERT OR IGNORE INTO wifi_app_traffic (date, profile, app_name, bytes_in, bytes_out)
+            SELECT a.date, p.profile, a.app_name, SUM(a.bytes_in), SUM(a.bytes_out)
+            FROM app_traffic a
+            JOIN (
+                SELECT date, MAX(profile) AS profile
+                FROM profile_traffic
+                GROUP BY date
+                HAVING COUNT(DISTINCT profile) = 1
+            ) p ON a.date = p.date
+            WHERE NOT EXISTS (SELECT 1 FROM wifi_app_traffic LIMIT 1)
+            GROUP BY a.date, p.profile, a.app_name;
         """)
 
         let defaults: [String: String] = [
@@ -326,6 +431,27 @@ final class SQLiteManager {
                 sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)
+
+            let wifiAppSQL = """
+                INSERT INTO wifi_app_traffic (date, profile, app_name, bytes_in, bytes_out)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(date, profile, app_name) DO UPDATE SET
+                    bytes_in = bytes_in + excluded.bytes_in,
+                    bytes_out = bytes_out + excluded.bytes_out;
+            """
+            for (appName, (bi, bo)) in appDeltas {
+                if bi <= 0 && bo <= 0 { continue }
+                var waStmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, wifiAppSQL, -1, &waStmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(waStmt, 1, (dateStr as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(waStmt, 2, (profile as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(waStmt, 3, (appName as NSString).utf8String, -1, nil)
+                    sqlite3_bind_int64(waStmt, 4, bi)
+                    sqlite3_bind_int64(waStmt, 5, bo)
+                    sqlite3_step(waStmt)
+                }
+                sqlite3_finalize(waStmt)
+            }
         }
 
         execSQL("COMMIT;")
@@ -631,10 +757,173 @@ final class SQLiteManager {
         return rows
     }
 
+    private func readWiFiLimitsUnlocked() -> [String: (Bool, Double)] {
+        var map: [String: (Bool, Double)] = [:]
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT ssid, is_metered, limit_gb FROM wifi_limits;", -1, &stmt, nil) == SQLITE_OK {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(stmt, 0) {
+                    let s = String(cString: ptr)
+                    let met = sqlite3_column_int(stmt, 1) != 0
+                    let lim = sqlite3_column_double(stmt, 2)
+                    map[s] = (met, lim)
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+        return map
+    }
+
+    func setWiFiLimit(ssid: String, isMetered: Bool, limitGb: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        let sql = "INSERT OR REPLACE INTO wifi_limits (ssid, is_metered, limit_gb) VALUES (?, ?, ?);"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (ssid as NSString).utf8String, -1, nil)
+            sqlite3_bind_int(stmt, 2, isMetered ? 1 : 0)
+            sqlite3_bind_double(stmt, 3, max(0, limitGb))
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+    }
+
+    func queryWiFiTopApps(ssid: String) -> [AppRow] {
+        lock.lock()
+        defer { lock.unlock() }
+        var apps: [AppRow] = []
+        let sql = """
+            SELECT app_name, SUM(bytes_in), SUM(bytes_out)
+            FROM wifi_app_traffic
+            WHERE profile = ?
+            GROUP BY app_name
+            ORDER BY (SUM(bytes_in) + SUM(bytes_out)) DESC
+            LIMIT 40;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (ssid as NSString).utf8String, -1, nil)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(stmt, 0) {
+                    let name = String(cString: ptr)
+                    let bi = sqlite3_column_int64(stmt, 1)
+                    let bo = sqlite3_column_int64(stmt, 2)
+                    apps.append(AppRow(app_name: name, bytes_in: bi, bytes_out: bo, total: bi + bo))
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+        return apps
+    }
+
+    func insertSpeedtest(ssid: String, downMbps: Double, upMbps: Double, pingMs: Double, jitterMs: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Date()
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm"
+        let sql = """
+            INSERT INTO speedtest_history (timestamp, date_str, ssid, down_mbps, up_mbps, ping_ms, jitter_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_int64(stmt, 1, Int64(now.timeIntervalSince1970))
+            sqlite3_bind_text(stmt, 2, (fmt.string(from: now) as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (ssid as NSString).utf8String, -1, nil)
+            sqlite3_bind_double(stmt, 4, downMbps)
+            sqlite3_bind_double(stmt, 5, upMbps)
+            sqlite3_bind_double(stmt, 6, pingMs)
+            sqlite3_bind_double(stmt, 7, jitterMs)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+    }
+
+    func getSpeedtestHistory(limit: Int = 50) -> [SpeedtestRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        var list: [SpeedtestRecord] = []
+        let sql = """
+            SELECT id, timestamp, date_str, ssid, down_mbps, up_mbps, ping_ms, jitter_ms
+            FROM speedtest_history
+            ORDER BY timestamp DESC
+            LIMIT ?;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = sqlite3_column_int64(stmt, 0)
+                let ts = sqlite3_column_int64(stmt, 1)
+                let ds = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+                let ssid = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "—"
+                let dn = sqlite3_column_double(stmt, 4)
+                let up = sqlite3_column_double(stmt, 5)
+                let pg = sqlite3_column_double(stmt, 6)
+                let jt = sqlite3_column_double(stmt, 7)
+                list.append(SpeedtestRecord(id: id, timestamp: ts, date_str: ds, ssid: ssid, down_mbps: dn, up_mbps: up, ping_ms: pg, jitter_ms: jt))
+            }
+        }
+        sqlite3_finalize(stmt)
+        return list
+    }
+
+    func insertOutage(startTs: Int64, endTs: Int64, startStr: String, endStr: String, durationSec: Int, ssid: String, reason: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let sql = """
+            INSERT INTO outage_log (start_ts, end_ts, start_str, end_str, duration_sec, ssid, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_int64(stmt, 1, startTs)
+            sqlite3_bind_int64(stmt, 2, endTs)
+            sqlite3_bind_text(stmt, 3, (startStr as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 4, (endStr as NSString).utf8String, -1, nil)
+            sqlite3_bind_int(stmt, 5, Int32(durationSec))
+            sqlite3_bind_text(stmt, 6, (ssid as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 7, (reason as NSString).utf8String, -1, nil)
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+    }
+
+    func getOutageLog(limit: Int = 50) -> [OutageRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        var list: [OutageRecord] = []
+        let sql = """
+            SELECT id, start_ts, end_ts, start_str, end_str, duration_sec, ssid, reason
+            FROM outage_log
+            ORDER BY start_ts DESC
+            LIMIT ?;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = sqlite3_column_int64(stmt, 0)
+                let st = sqlite3_column_int64(stmt, 1)
+                let et = sqlite3_column_int64(stmt, 2)
+                let ss = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
+                let es = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? ""
+                let dur = Int(sqlite3_column_int(stmt, 5))
+                let ssid = sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? "—"
+                let rsn = sqlite3_column_text(stmt, 7).map { String(cString: $0) } ?? ""
+                list.append(OutageRecord(id: id, start_ts: st, end_ts: et, start_str: ss, end_str: es, duration_sec: dur, ssid: ssid, reason: rsn))
+            }
+        }
+        sqlite3_finalize(stmt)
+        return list
+    }
+
     func getWiFiUsage(activeProfile: String, preferredSSIDs: [String] = []) -> [WiFiUsageRow] {
         lock.lock()
         defer { lock.unlock() }
 
+        let limitsMap = readWiFiLimitsUnlocked()
         let cal = Calendar.current
         let now = Date()
         let fmt = DateFormatter()
@@ -685,11 +974,14 @@ final class SQLiteManager {
                 let lastSeen = sqlite3_column_text(stmt, 7).map { String(cString: $0) } ?? todayStr
 
                 let isActive = (ssid == activeProfile)
+                let (isMet, limGb) = limitsMap[ssid] ?? (false, 0.0)
                 seenSSIDs.insert(ssid)
                 rows.append(WiFiUsageRow(
                     ssid: ssid,
                     is_active: isActive,
                     is_saved_only: false,
+                    is_metered: isMet,
+                    limit_gb: limGb,
                     today_in: tIn,
                     today_out: tOut,
                     today_total: tIn + tOut,
@@ -707,10 +999,13 @@ final class SQLiteManager {
         let cleanActive = activeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cleanActive.isEmpty && cleanActive != "—" && cleanActive != "Disconnected" && cleanActive != "Offline" && !seenSSIDs.contains(cleanActive) {
             seenSSIDs.insert(cleanActive)
+            let (isMet, limGb) = limitsMap[cleanActive] ?? (false, 0.0)
             rows.insert(WiFiUsageRow(
                 ssid: cleanActive,
                 is_active: true,
                 is_saved_only: false,
+                is_metered: isMet,
+                limit_gb: limGb,
                 today_in: 0,
                 today_out: 0,
                 today_total: 0,
@@ -736,10 +1031,13 @@ final class SQLiteManager {
             guard !trimmed.isEmpty, !seenSSIDs.contains(trimmed) else { continue }
             seenSSIDs.insert(trimmed)
             let rnk = rankMap[trimmed] ?? 999
+            let (isMet, limGb) = limitsMap[trimmed] ?? (false, 0.0)
             rows.append(WiFiUsageRow(
                 ssid: trimmed,
                 is_active: false,
                 is_saved_only: true,
+                is_metered: isMet,
+                limit_gb: limGb,
                 today_in: 0,
                 today_out: 0,
                 today_total: 0,

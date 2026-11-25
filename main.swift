@@ -197,14 +197,52 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
         if path == "/api/wifi_detail" {
             let ssid = param("ssid", "")
             let daily = db.queryWiFiDailyHistory(ssid: ssid)
+            let apps = db.queryWiFiTopApps(ssid: ssid)
+            let wifiRows = db.getWiFiUsage(activeProfile: engine.diagnostics.network_profile)
+            let matched = wifiRows.first(where: { $0.ssid == ssid })
             let totalIn = daily.reduce(0) { $0 + $1.bytes_in }
             let totalOut = daily.reduce(0) { $0 + $1.bytes_out }
             let dict: [String: Any] = [
                 "ssid": ssid,
                 "daily": encodeToObject(daily),
+                "apps": encodeToObject(apps),
+                "is_metered": matched?.is_metered ?? false,
+                "limit_gb": matched?.limit_gb ?? 0.0,
+                "month_total": matched?.month_total ?? 0,
                 "total_in": totalIn,
                 "total_out": totalOut,
                 "total": totalIn + totalOut
+            ]
+            return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        }
+
+        if path == "/api/save_wifi_limit" {
+            let ssid = param("ssid", "")
+            let metered = param("metered", "0") == "1"
+            let limitGb = Double(param("limit_gb", "0")) ?? 0.0
+            if !ssid.isEmpty {
+                db.setWiFiLimit(ssid: ssid, isMetered: metered, limitGb: limitGb)
+            }
+            return (try? JSONSerialization.data(withJSONObject: ["status": "saved"])) ?? Data()
+        }
+
+        if path == "/api/speedtest_history" {
+            let hist = db.getSpeedtestHistory(limit: 50)
+            let outages = db.getOutageLog(limit: 50)
+            let dict: [String: Any] = [
+                "history": encodeToObject(hist),
+                "outages": encodeToObject(outages)
+            ]
+            return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        }
+
+        if path == "/api/lan_scan" {
+            if param("start", "") == "1" {
+                engine.runLanScan()
+            }
+            let dict: [String: Any] = [
+                "scanning": engine.diagnostics.lan_scanning,
+                "devices": encodeToObject(engine.lanDevices)
             ]
             return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
         }
@@ -297,6 +335,36 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
         case "run_speedtest":
             TelemetryEngine.shared.runSpeedtest()
 
+        case "run_lan_scan":
+            TelemetryEngine.shared.runLanScan()
+
+        case "save_wifi_limit":
+            if let ssid = dict["ssid"] as? String, !ssid.isEmpty {
+                let isMet = (dict["is_metered"] as? Bool) ?? false
+                let lim = (dict["limit_gb"] as? Double) ?? Double((dict["limit_gb"] as? String) ?? "0") ?? 0.0
+                SQLiteManager.shared.setWiFiLimit(ssid: ssid, isMetered: isMet, limitGb: lim)
+            }
+
+        case "open_main_window":
+            DispatchQueue.main.async {
+                self.appDelegate?.statusPopover?.performClose(nil)
+                self.appDelegate?.showMainWindow()
+                if let view = dict["view"] as? String, !view.isEmpty {
+                    self.appDelegate?.webView?.evaluateJavaScript("switchView('\(view)');", completionHandler: nil)
+                }
+            }
+
+        case "hide_main_window":
+            DispatchQueue.main.async {
+                self.appDelegate?.statusPopover?.performClose(nil)
+                self.appDelegate?.minimizeToBackground()
+            }
+
+        case "quit_app":
+            DispatchQueue.main.async {
+                self.appDelegate?.stopBackgroundAndExit()
+            }
+
         case "check_updates":
             TelemetryEngine.shared.checkForUpdates(manual: true)
 
@@ -356,10 +424,13 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
 }
 
 // MARK: - Main Application Delegate
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, NSPopoverDelegate {
     var mainWindow: NSWindow!
     var webView: WKWebView!
     var statusItem: NSStatusItem!
+    var statusPopover: NSPopover!
+    var popoverWebView: WKWebView!
+    var statusContextMenu: NSMenu!
     var statusTimer: Timer?
     var allowFullTermination = false
 
@@ -548,14 +619,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func applyWindowTheme(_ theme: String) {
-        guard let win = mainWindow else { return }
-        if theme == "light" {
-            win.appearance = NSAppearance(named: .aqua)
-            win.backgroundColor = NSColor(calibratedRed: 0.96, green: 0.965, blue: 0.975, alpha: 1.0)
-        } else {
-            win.appearance = NSAppearance(named: .darkAqua)
-            win.backgroundColor = NSColor(calibratedRed: 0.035, green: 0.035, blue: 0.043, alpha: 1.0)
+        let appearance = NSAppearance(named: theme == "light" ? .aqua : .darkAqua)
+        if let win = mainWindow {
+            win.appearance = appearance
+            if theme == "light" {
+                win.backgroundColor = NSColor(calibratedRed: 0.96, green: 0.965, blue: 0.975, alpha: 1.0)
+            } else {
+                win.backgroundColor = NSColor(calibratedRed: 0.035, green: 0.039, blue: 0.051, alpha: 1.0)
+            }
         }
+        statusPopover?.appearance = appearance
+        popoverWebView?.evaluateJavaScript("if(window.applyPopoverTheme)applyPopoverTheme('\(theme)');", completionHandler: nil)
     }
 
     func setupMainWindow() {
@@ -776,7 +850,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         quitItem.target = self
         menu.addItem(quitItem)
 
-        statusItem.menu = menu
+        statusItem.menu = nil
+        statusContextMenu = menu
+        setupPopover()
+
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(handleStatusBarButtonClick(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+
+    private func setupPopover() {
+        let popSize = NSSize(width: 356, height: 468)
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let schemeHandler = NetPulseSchemeHandler(resourceDir: resolveResourceDir())
+        config.setURLSchemeHandler(schemeHandler, forURLScheme: "netpulse")
+        config.userContentController.add(NativeActionHandler(appDelegate: self), name: "netpulseNative")
+
+        popoverWebView = WKWebView(frame: NSRect(origin: .zero, size: popSize), configuration: config)
+        popoverWebView.setValue(false, forKey: "drawsBackground")
+        if let url = URL(string: "netpulse://app/popover.html") {
+            popoverWebView.load(URLRequest(url: url))
+        }
+
+        let vc = NSViewController()
+        vc.view = NSView(frame: NSRect(origin: .zero, size: popSize))
+        popoverWebView.autoresizingMask = [.width, .height]
+        vc.view.addSubview(popoverWebView)
+
+        statusPopover = NSPopover()
+        statusPopover.contentSize = popSize
+        statusPopover.behavior = .transient
+        statusPopover.animates = true
+        statusPopover.delegate = self
+        statusPopover.contentViewController = vc
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        popoverWebView?.evaluateJavaScript("if(window.setPopoverActive)setPopoverActive(true);", completionHandler: nil)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        popoverWebView?.evaluateJavaScript("if(window.setPopoverActive)setPopoverActive(false);", completionHandler: nil)
+    }
+
+    @objc func handleStatusBarButtonClick(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let isRightClick = (event?.type == .rightMouseUp) || (event?.modifierFlags.contains(.control) == true)
+        if isRightClick {
+            statusPopover?.performClose(nil)
+            statusItem.menu = statusContextMenu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+            return
+        }
+        if statusPopover.isShown {
+            statusPopover.performClose(sender)
+        } else if let button = statusItem.button {
+            statusPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popoverWebView.evaluateJavaScript("if(window.refreshPopoverNow)refreshPopoverNow();", completionHandler: nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private func setCompactMenuBarTitle(down: Double, up: Double, button: NSStatusBarButton) {

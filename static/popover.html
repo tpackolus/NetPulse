@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NetPulse Menu Bar</title>
+    <style>
+        :root {
+            --bg: #0e1015;
+            --card: #151821;
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f4f5f7;
+            --sub: #9ca3af;
+            --muted: #6b7280;
+            --down: #10b981;
+            --up: #3b82f6;
+        }
+        [data-theme="light"] {
+            --bg: #f4f6fa;
+            --card: #ffffff;
+            --border: rgba(15, 23, 42, 0.10);
+            --text: #0f172a;
+            --sub: #475569;
+            --muted: #64748b;
+            --down: #059669;
+            --up: #2563eb;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 12px;
+            height: 468px;
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            overflow: hidden;
+        }
+        .head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-weight: 700;
+            font-size: 0.88rem;
+        }
+        .live-pill {
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            color: var(--down);
+            background: rgba(16, 185, 129, 0.15);
+            padding: 2px 6px;
+            border-radius: 999px;
+        }
+        .ping-chip {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.7rem;
+            color: var(--sub);
+            background: var(--card);
+            border: 1px solid var(--border);
+            padding: 3px 8px;
+            border-radius: 6px;
+        }
+        .rates-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .rate-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            padding: 9px 11px;
+        }
+        .rate-lbl {
+            font-size: 0.61rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+        .down-bg { background: var(--down); }
+        .up-bg { background: var(--up); }
+        .rate-val {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-top: 3px;
+            font-variant-numeric: tabular-nums;
+        }
+        .spark-wrap {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            height: 78px;
+            padding: 6px;
+        }
+        canvas { width: 100%; height: 100%; display: block; }
+        .wifi-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            padding: 8px 11px;
+            cursor: pointer;
+        }
+        .wifi-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.79rem;
+            font-weight: 700;
+        }
+        .wifi-radio {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.67rem;
+            color: var(--down);
+        }
+        .wifi-sub {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.68rem;
+            color: var(--sub);
+            margin-top: 3px;
+        }
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+        .kpi-mini {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 8px;
+            text-align: center;
+        }
+        .kpi-mini span {
+            display: block;
+            font-size: 0.58rem;
+            font-weight: 700;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+        }
+        .kpi-mini strong {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.76rem;
+            margin-top: 2px;
+            display: block;
+        }
+        .apps-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            padding: 8px 10px;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .apps-head {
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            color: var(--muted);
+        }
+        .app-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.73rem;
+            padding: 2px 0;
+        }
+        .app-name {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 175px;
+        }
+        .app-rate {
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.7rem;
+            color: var(--sub);
+        }
+        .footer {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr 0.7fr;
+            gap: 6px;
+        }
+        button {
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 6px 8px;
+            font-size: 0.73rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        button:hover { opacity: 0.9; }
+        .btn-main {
+            background: var(--down);
+            color: #04140e;
+            border-color: transparent;
+        }
+        [data-theme="light"] .btn-main { color: #ffffff; }
+        .btn-quit { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="head">
+        <div class="brand">
+            <span>NetPulse</span>
+            <span class="live-pill">LIVE</span>
+        </div>
+        <div class="ping-chip" id="popPing">Ping: —</div>
+    </div>
+
+    <div class="rates-grid">
+        <div class="rate-box">
+            <div class="rate-lbl"><i class="dot down-bg"></i>DOWNLOAD</div>
+            <div class="rate-val" id="popDown">0 B/s</div>
+        </div>
+        <div class="rate-box">
+            <div class="rate-lbl"><i class="dot up-bg"></i>UPLOAD</div>
+            <div class="rate-val" id="popUp">0 B/s</div>
+        </div>
+    </div>
+
+    <div class="spark-wrap">
+        <canvas id="popCanvas"></canvas>
+    </div>
+
+    <div class="wifi-box" onclick="openDashboard('wifi')">
+        <div class="wifi-top">
+            <span id="popSsid">Detecting Wi-Fi...</span>
+            <span class="wifi-radio" id="popRadio">—</span>
+        </div>
+        <div class="wifi-sub" id="popWifiUsage">On this Wi-Fi: Today 0 B · Total 0 B</div>
+    </div>
+
+    <div class="kpi-row">
+        <div class="kpi-mini"><span>TODAY</span><strong id="popToday">0 B</strong></div>
+        <div class="kpi-mini"><span>THIS WEEK</span><strong id="popWeek">0 B</strong></div>
+        <div class="kpi-mini"><span>THIS MONTH</span><strong id="popMonth">0 B</strong></div>
+    </div>
+
+    <div class="apps-box">
+        <div class="apps-head">TOP ACTIVE PROCESSES</div>
+        <div id="popApps"></div>
+    </div>
+
+    <div class="footer">
+        <button class="btn-main" onclick="openDashboard('overview')">Open Dashboard</button>
+        <button onclick="openDashboard('speedtest')">Speedtest</button>
+        <button class="btn-quit" onclick="quitApp()">Quit</button>
+    </div>
+
+    <script>
+        let popTimer = null;
+
+        function fmtBytes(b) {
+            if (!b || b <= 0) return '0 B';
+            const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.min(s.length - 1, Math.floor(Math.log(b) / Math.log(k)));
+            return (b / Math.pow(k, i)).toFixed(i >= 3 ? 2 : (i === 2 ? 1 : 0)) + ' ' + s[i];
+        }
+        function fmtSpeed(bps) {
+            return (!bps || bps < 1) ? '0 B/s' : fmtBytes(bps) + '/s';
+        }
+        function postNative(payload) {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.netpulseNative) {
+                window.webkit.messageHandlers.netpulseNative.postMessage(payload);
+            }
+        }
+        function openDashboard(view) {
+            postNative({ action: 'open_main_window', view: view });
+        }
+        function quitApp() {
+            postNative({ action: 'quit_app' });
+        }
+        window.applyPopoverTheme = function(t) {
+            document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+        };
+        window.setPopoverActive = function(active) {
+            if (popTimer) { clearInterval(popTimer); popTimer = null; }
+            if (active) {
+                refreshPopoverNow();
+                popTimer = setInterval(refreshPopoverNow, 1000);
+            }
+        };
+        window.refreshPopoverNow = async function() {
+            try {
+                const res = await fetch('netpulse://app/api/realtime?interface=all');
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('popDown').textContent = fmtSpeed(data.speed_in);
+                document.getElementById('popUp').textContent = fmtSpeed(data.speed_out);
+
+                const d = data.diagnostics || {};
+                const pMs = d.ping_internet_ms >= 0 ? d.ping_internet_ms.toFixed(1) + ' ms' : '—';
+                document.getElementById('popPing').textContent = 'Ping: ' + pMs;
+                document.getElementById('popSsid').textContent = d.network_profile || 'Disconnected';
+
+                if (d.wifi_rssi && d.wifi_rssi < 0) {
+                    document.getElementById('popRadio').textContent = `${d.wifi_band} · ${d.wifi_rssi} dBm · ${Math.round(d.wifi_tx_rate)} Mbps`;
+                } else {
+                    document.getElementById('popRadio').textContent = d.local_ip || '—';
+                }
+
+                const activeW = (data.wifi_usage || []).find(w => w.is_active);
+                document.getElementById('popWifiUsage').textContent = activeW
+                    ? `Today: ${fmtBytes(activeW.today_total)} · Total: ${fmtBytes(activeW.all_total)}`
+                    : `Local IP: ${d.local_ip || '—'}`;
+
+                if (data.summaries) {
+                    document.getElementById('popToday').textContent = fmtBytes(data.summaries.today.total);
+                    document.getElementById('popWeek').textContent = fmtBytes(data.summaries.this_week.total);
+                    document.getElementById('popMonth').textContent = fmtBytes(data.summaries.this_month.total);
+                }
+
+                const apps = (data.live_apps || []).slice(0, 4);
+                document.getElementById('popApps').innerHTML = apps.length ? apps.map(a => {
+                    const spd = a.speed_in + a.speed_out;
+                    return `<div class="app-item"><span class="app-name">${a.app_name}</span><span class="app-rate">${spd > 50 ? fmtSpeed(spd) : fmtBytes(a.total)}</span></div>`;
+                }).join('') : `<div style="font-size:0.72rem;color:var(--muted);">Idle</div>`;
+
+                drawSpark((data.realtime_history || []).slice(-60));
+            } catch (e) {}
+        };
+
+        function drawSpark(pts) {
+            const c = document.getElementById('popCanvas');
+            if (!c || pts.length < 2) return;
+            const dpr = window.devicePixelRatio || 1;
+            const r = c.getBoundingClientRect();
+            if (!r.width) return;
+            c.width = r.width * dpr;
+            c.height = r.height * dpr;
+            const ctx = c.getContext('2d');
+            ctx.scale(dpr, dpr);
+            ctx.clearRect(0, 0, r.width, r.height);
+            let mx = 10240;
+            pts.forEach(p => { if (p.speed_in > mx) mx = p.speed_in; if (p.speed_out > mx) mx = p.speed_out; });
+            mx *= 1.15;
+            const line = (key, col, fill) => {
+                ctx.beginPath();
+                pts.forEach((p, i) => {
+                    const x = (i / (pts.length - 1)) * r.width;
+                    const y = r.height - 2 - (p[key] / mx) * (r.height - 6);
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                });
+                ctx.strokeStyle = col;
+                ctx.lineWidth = 1.6;
+                ctx.stroke();
+                ctx.lineTo(r.width, r.height);
+                ctx.lineTo(0, r.height);
+                ctx.closePath();
+                ctx.fillStyle = fill;
+                ctx.fill();
+            };
+            line('speed_in', '#10b981', 'rgba(16,185,129,0.18)');
+            line('speed_out', '#3b82f6', 'rgba(59,130,246,0.14)');
+        }
+
+        fetch('netpulse://app/api/settings').then(r => r.json()).then(d => {
+            if (d.settings && d.settings.theme) applyPopoverTheme(d.settings.theme);
+        }).catch(() => {});
+        refreshPopoverNow();
+    </script>
+</body>
+</html>

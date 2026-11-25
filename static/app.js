@@ -20,8 +20,12 @@ const VIEW_META = {
         subtitle: 'Per-process bandwidth matrix, open sockets & 24h profiles'
     },
     network: {
-        title: 'Sockets, GeoIP & Adapters',
-        subtitle: 'Live TCP/UDP endpoint security audit & hardware interfaces'
+        title: 'Sockets, GeoIP & LAN Scanner',
+        subtitle: 'Live endpoint security audit, subnet device discovery & hardware adapters'
+    },
+    speedtest: {
+        title: 'Speedtest & Connection Outages',
+        subtitle: 'Bidirectional multi-CDN benchmark, per-Wi-Fi speed history & outage log'
     }
 };
 
@@ -61,6 +65,9 @@ const state = {
 let toastTimer = null;
 let inspectorRefreshTimer = null;
 let currentInspectedApp = null;
+let currentInspectedWifi = null;
+let wasSpeedtestRunning = false;
+let lanPollTimer = null;
 
 function formatBytes(bytes, decimals = 2) {
     if (!bytes || bytes <= 0) return '0 B';
@@ -145,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
         if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
-        const viewMap = { '1': 'overview', '2': 'wifi', '3': 'history', '4': 'apps', '5': 'network' };
+        const viewMap = { '1': 'overview', '2': 'wifi', '3': 'history', '4': 'apps', '5': 'network', '6': 'speedtest' };
         if (viewMap[e.key]) {
             switchView(viewMap[e.key]);
         }
@@ -168,12 +175,15 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchRealtime();
     fetchHistory();
     fetchConnections();
+    fetchSpeedtestAndOutages();
+    fetchLanDevices(false);
     setTimeout(fetchConnections, 1500);
     setTimeout(fetchConnections, 3200);
 
     setInterval(fetchRealtime, 1000);
     setInterval(fetchHistory, 10000);
     setInterval(fetchConnections, 4500);
+    setInterval(fetchSpeedtestAndOutages, 8000);
 
     window.addEventListener('resize', redrawVisibleCharts);
     if (window.ResizeObserver) {
@@ -211,6 +221,9 @@ function switchView(viewName) {
 
     if (viewName === 'network') {
         fetchConnections();
+        fetchLanDevices(false);
+    } else if (viewName === 'speedtest') {
+        fetchSpeedtestAndOutages();
     }
     requestAnimationFrame(redrawVisibleCharts);
 }
@@ -358,6 +371,34 @@ function updateRealtimeUI(data) {
         const netOnline = d.network_profile !== 'Disconnected';
         document.getElementById('sidebarNetDot').className = `status-dot ${netOnline ? 'online' : ''}`;
 
+        // Live CoreWLAN Wi-Fi Radio Quality
+        const radioChip = document.getElementById('diagRadioChip');
+        if (d.wifi_rssi && d.wifi_rssi < 0) {
+            if (radioChip) {
+                radioChip.textContent = `${d.wifi_band} · ${d.wifi_rssi} dBm (${d.wifi_quality_pct}%)`;
+                radioChip.style.opacity = '1';
+            }
+            document.getElementById('wifiRadioRssi').textContent = `${d.wifi_rssi} dBm`;
+            const qualLabel = d.wifi_rssi >= -60 ? 'Excellent' : (d.wifi_rssi >= -70 ? 'Good' : (d.wifi_rssi >= -80 ? 'Fair' : 'Weak'));
+            document.getElementById('wifiRadioQuality').textContent = `Signal quality: ${d.wifi_quality_pct}% (${qualLabel})`;
+            document.getElementById('wifiRadioSnr').textContent = `${d.wifi_snr} dB SNR`;
+            document.getElementById('wifiRadioNoise').textContent = `Noise floor: ${d.wifi_noise} dBm`;
+            document.getElementById('wifiRadioBand').textContent = d.wifi_band;
+            document.getElementById('wifiRadioChannel').textContent = `Channel ${d.wifi_channel} (${d.wifi_width})`;
+            document.getElementById('wifiRadioTx').textContent = `${Math.round(d.wifi_tx_rate)} Mbps`;
+            document.getElementById('wifiRadioStd').textContent = d.wifi_standard;
+        } else {
+            if (radioChip) radioChip.textContent = '';
+            document.getElementById('wifiRadioRssi').textContent = '— dBm';
+            document.getElementById('wifiRadioQuality').textContent = 'Wi-Fi radio inactive';
+            document.getElementById('wifiRadioSnr').textContent = '—';
+            document.getElementById('wifiRadioNoise').textContent = 'Noise floor: —';
+            document.getElementById('wifiRadioBand').textContent = '—';
+            document.getElementById('wifiRadioChannel').textContent = 'Channel: —';
+            document.getElementById('wifiRadioTx').textContent = '— Mbps';
+            document.getElementById('wifiRadioStd').textContent = '—';
+        }
+
         document.getElementById('diagPublicIP').textContent = d.public_ip || '—';
         document.getElementById('diagISP').textContent = d.isp_org || '—';
         document.getElementById('diagLocation').textContent = `Location: ${d.country_city || '—'}`;
@@ -390,23 +431,49 @@ function updateRealtimeUI(data) {
         }
 
         const stBtn = document.getElementById('runSpeedtestBtn');
+        const fullStBtn = document.getElementById('fullSpeedtestBtn');
         const stVal = document.getElementById('diagSpeedtestVal');
+        const stPhase = document.getElementById('speedtestPhaseLabel');
+
+        if (d.speedtest_down_mbps > 0) {
+            document.getElementById('stCardDown').textContent = `${d.speedtest_down_mbps.toFixed(1)} Mbps`;
+        }
+        if (d.speedtest_up_mbps > 0) {
+            document.getElementById('stCardUp').textContent = `${d.speedtest_up_mbps.toFixed(1)} Mbps`;
+        }
+        if (d.speedtest_ping_ms > 0) {
+            document.getElementById('stCardPing').textContent = `${d.speedtest_ping_ms.toFixed(1)} ms`;
+            document.getElementById('stCardJitter').textContent = `${d.speedtest_jitter_ms.toFixed(1)} ms`;
+        }
+
         if (d.speedtest_running) {
-            stVal.textContent = d.speedtest_down_mbps > 0
-                ? `${d.speedtest_down_mbps.toFixed(1)} Mbps...`
-                : 'Benchmarking...';
+            wasSpeedtestRunning = true;
+            const liveTxt = d.speedtest_up_mbps > 0
+                ? `↓ ${d.speedtest_down_mbps.toFixed(1)} · ↑ ${d.speedtest_up_mbps.toFixed(1)} Mbps`
+                : (d.speedtest_down_mbps > 0 ? `↓ ${d.speedtest_down_mbps.toFixed(1)} Mbps...` : (d.speedtest_phase || 'Benchmarking...'));
+            stVal.textContent = liveTxt;
             stBtn.textContent = 'Testing...';
             stBtn.disabled = true;
+            if (fullStBtn) { fullStBtn.textContent = d.speedtest_phase || 'Testing...'; fullStBtn.disabled = true; }
+            if (stPhase && d.speedtest_phase) stPhase.textContent = d.speedtest_phase;
         } else {
+            if (wasSpeedtestRunning) {
+                wasSpeedtestRunning = false;
+                fetchSpeedtestAndOutages();
+            }
             stBtn.textContent = 'Run Test';
             stBtn.disabled = false;
+            if (fullStBtn) { fullStBtn.textContent = 'Start Full Speedtest'; fullStBtn.disabled = false; }
+            if (stPhase) stPhase.textContent = 'Measures ICMP latency, jitter, multi-stream CDN download & upload throughput';
             if (d.speedtest_down_mbps > 0) {
-                stVal.textContent = `${d.speedtest_down_mbps.toFixed(1)} Mbps`;
+                stVal.textContent = d.speedtest_up_mbps > 0
+                    ? `↓ ${d.speedtest_down_mbps.toFixed(1)} / ↑ ${d.speedtest_up_mbps.toFixed(1)} Mbps`
+                    : `${d.speedtest_down_mbps.toFixed(1)} Mbps`;
             }
         }
 
         // Version & Update UI sync
-        const verStr = `v${d.app_version || '2.4.0'}`;
+        const verStr = `v${d.app_version || '2.5.0'}`;
         document.getElementById('sidebarVersionLabel').textContent = `macOS Engine ${verStr}`;
         const topUpdateLabel = document.getElementById('topUpdateLabel');
         const topUpdateBtn = document.getElementById('topUpdateBtn');
@@ -677,6 +744,13 @@ function renderWiFiSummaryAndTable(wifiRows) {
             statusBadge = `<span class="wifi-status-badge wifi-saved-badge">${escapeHtml(r.last_seen || 'Saved on Mac')}</span>`;
         }
 
+        if (r.is_metered) {
+            const capTxt = r.limit_gb > 0
+                ? `HOTSPOT · ${Math.min(999, Math.round((r.month_total / (r.limit_gb * 1073741824)) * 100))}% of ${r.limit_gb} GB`
+                : 'HOTSPOT';
+            statusBadge += ` <span class="wifi-status-badge wifi-hotspot-badge">${capTxt}</span>`;
+        }
+
         const todayCell = r.today_total > 0
             ? `<strong style="color:var(--text-primary);">${formatBytes(r.today_total)}</strong>
                <div style="font-size:10px;color:var(--text-muted);">IN ${formatBytes(r.today_in)} · OUT ${formatBytes(r.today_out)}</div>`
@@ -705,6 +779,7 @@ function renderWiFiSummaryAndTable(wifiRows) {
 }
 
 async function openWifiInspector(ssid) {
+    currentInspectedWifi = ssid;
     document.getElementById('inspectorWifiTitle').textContent = `Wi-Fi Network: ${ssid}`;
     document.getElementById('wifiDetailModal').classList.remove('hidden');
     try {
@@ -715,14 +790,31 @@ async function openWifiInspector(ssid) {
         document.getElementById('wifiInspIn').textContent = formatBytes(data.total_in);
         document.getElementById('wifiInspOut').textContent = formatBytes(data.total_out);
 
+        document.getElementById('wifiModalMeteredCheck').checked = !!data.is_metered;
+        document.getElementById('wifiModalLimitGb').value = data.limit_gb > 0 ? data.limit_gb : '';
+
         const daily = data.daily || [];
         state.barChartCache['wifiDetailCanvas'] = daily;
         requestAnimationFrame(() => drawHistoryChart('wifiDetailCanvas', daily));
 
+        const apps = data.apps || [];
+        const appsBody = document.getElementById('wifiInspectorAppsBody');
+        if (!apps.length) {
+            appsBody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No per-app data recorded on this Wi-Fi yet</td></tr>`;
+        } else {
+            appsBody.innerHTML = apps.slice(0, 25).map(a => `
+                <tr>
+                    <td><strong>${escapeHtml(a.app_name)}</strong></td>
+                    <td class="num-col down-text">${formatBytes(a.bytes_in)}</td>
+                    <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(a.total)}</strong></td>
+                </tr>
+            `).join('');
+        }
+
         const activeDays = [...daily].filter(d => d.total > 0).reverse();
         const tbody = document.getElementById('wifiInspectorBody');
         if (!activeDays.length) {
-            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No bandwidth recorded on this Wi-Fi in the last 30 days</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No bandwidth recorded in the last 30 days</td></tr>`;
         } else {
             tbody.innerHTML = activeDays.map(d => `
                 <tr>
@@ -738,7 +830,23 @@ async function openWifiInspector(ssid) {
     }
 }
 
+async function saveCurrentWifiLimit() {
+    if (!currentInspectedWifi) return;
+    const isMet = document.getElementById('wifiModalMeteredCheck').checked;
+    const limGb = parseFloat(document.getElementById('wifiModalLimitGb').value || '0') || 0;
+    postNativeAction({
+        action: 'save_wifi_limit',
+        ssid: currentInspectedWifi,
+        is_metered: isMet,
+        limit_gb: limGb
+    });
+    await fetch(`netpulse://app/api/save_wifi_limit?ssid=${encodeURIComponent(currentInspectedWifi)}&metered=${isMet ? '1' : '0'}&limit_gb=${encodeURIComponent(limGb)}`).catch(() => {});
+    showToast(`Saved Hotspot / Quota settings for ${currentInspectedWifi}`);
+    fetchRealtime();
+}
+
 function closeWifiInspector() {
+    currentInspectedWifi = null;
     document.getElementById('wifiDetailModal').classList.add('hidden');
     hideChartTooltip();
 }
@@ -1184,16 +1292,143 @@ function closeAppInspector() {
 
 function triggerSpeedtest() {
     const stBtn = document.getElementById('runSpeedtestBtn');
+    const fullStBtn = document.getElementById('fullSpeedtestBtn');
     const stVal = document.getElementById('diagSpeedtestVal');
-    if (stVal) stVal.textContent = 'Benchmarking...';
-    if (stBtn) {
-        stBtn.textContent = 'Testing...';
-        stBtn.disabled = true;
-    }
+    if (stVal) stVal.textContent = 'Measuring Latency...';
+    if (stBtn) { stBtn.textContent = 'Testing...'; stBtn.disabled = true; }
+    if (fullStBtn) { fullStBtn.textContent = 'Testing...'; fullStBtn.disabled = true; }
+    wasSpeedtestRunning = true;
     postNativeAction({ action: 'run_speedtest' });
     fetch('netpulse://app/api/speedtest').catch(() => {});
-    showToast('Started Multi-CDN Bandwidth Speedtest');
+    showToast('Started Bidirectional Speedtest (Ping + Download + Upload)');
     setTimeout(fetchRealtime, 500);
+}
+
+async function fetchSpeedtestAndOutages() {
+    try {
+        const res = await fetch('netpulse://app/api/speedtest_history');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderSpeedtestHistory(data.history || []);
+        renderOutageLog(data.outages || []);
+    } catch (err) {
+        console.error('Speedtest history error:', err);
+    }
+}
+
+function renderSpeedtestHistory(rows) {
+    const countEl = document.getElementById('stHistCount');
+    if (countEl) countEl.textContent = rows.length;
+    const tbody = document.getElementById('speedtestHistoryBody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No speedtest runs saved yet — click "Start Full Speedtest" above</td></tr>`;
+        return;
+    }
+
+    // Populate latest cards if not currently running
+    if (!wasSpeedtestRunning && rows[0]) {
+        const latest = rows[0];
+        if (document.getElementById('stCardDown').textContent.startsWith('—')) {
+            document.getElementById('stCardDown').textContent = `${latest.down_mbps.toFixed(1)} Mbps`;
+            document.getElementById('stCardUp').textContent = `${latest.up_mbps.toFixed(1)} Mbps`;
+            document.getElementById('stCardPing').textContent = `${latest.ping_ms.toFixed(1)} ms`;
+            document.getElementById('stCardJitter').textContent = `${latest.jitter_ms.toFixed(1)} ms`;
+        }
+    }
+
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>${escapeHtml(r.date_str)}</td>
+            <td><strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong></td>
+            <td class="num-col down-text"><strong>${r.down_mbps.toFixed(1)} Mbps</strong></td>
+            <td class="num-col up-text"><strong>${r.up_mbps.toFixed(1)} Mbps</strong></td>
+            <td class="num-col">${r.ping_ms.toFixed(1)} ms <span style="color:var(--text-muted);">(${r.jitter_ms.toFixed(1)} ms)</span></td>
+        </tr>
+    `).join('');
+}
+
+function formatDurationSec(sec) {
+    if (sec < 60) return `${sec}s`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return `${m}m ${s}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+}
+
+function renderOutageLog(rows) {
+    const countEl = document.getElementById('outageCount');
+    if (countEl) countEl.textContent = rows.length;
+    const tbody = document.getElementById('outageLogBody');
+    if (!tbody) return;
+
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">Zero connection outages recorded — connection has been stable</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>${escapeHtml(r.start_str)}</td>
+            <td>${escapeHtml(r.end_str.split(' ')[1] || r.end_str)}</td>
+            <td class="num-col"><strong class="sec-text-warn">${formatDurationSec(r.duration_sec)}</strong></td>
+            <td><strong>${escapeHtml(r.ssid)}</strong></td>
+            <td style="color:var(--text-secondary);">${escapeHtml(r.reason)}</td>
+        </tr>
+    `).join('');
+}
+
+function triggerLanScan() {
+    const btn = document.getElementById('lanScanBtn');
+    if (btn) { btn.textContent = 'Scanning...'; btn.disabled = true; }
+    showToast('Scanning local Wi-Fi subnet for active devices...');
+    fetchLanDevices(true);
+    if (lanPollTimer) clearInterval(lanPollTimer);
+    lanPollTimer = setInterval(() => fetchLanDevices(false), 900);
+}
+
+async function fetchLanDevices(startScan) {
+    try {
+        const res = await fetch(`netpulse://app/api/lan_scan${startScan ? '?start=1' : ''}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const btn = document.getElementById('lanScanBtn');
+        if (data.scanning) {
+            if (btn) { btn.textContent = 'Scanning...'; btn.disabled = true; }
+        } else {
+            if (btn) { btn.textContent = 'Scan Subnet'; btn.disabled = false; }
+            if (lanPollTimer) { clearInterval(lanPollTimer); lanPollTimer = null; }
+        }
+        if (Array.isArray(data.devices) && data.devices.length > 0) {
+            renderLanDevices(data.devices);
+        }
+    } catch (err) {
+        console.error('LAN scan error:', err);
+    }
+}
+
+function renderLanDevices(devices) {
+    document.getElementById('lanDeviceCount').textContent = devices.length;
+    const tbody = document.getElementById('lanDevicesBody');
+    tbody.innerHTML = devices.map(d => {
+        const pingStr = d.latency_ms >= 0 ? `${d.latency_ms.toFixed(1)} ms` : 'ARP Active';
+        const tag = d.is_gateway ? `<span class="sec-badge sec-local" style="margin-left:5px;">GW</span>`
+                  : (d.is_self ? `<span class="sec-badge sec-verified" style="margin-left:5px;">THIS MAC</span>` : '');
+        const subHost = (d.hostname && d.hostname !== '—') ? `<div style="font-size:0.65rem;color:var(--text-muted);">${escapeHtml(d.hostname)}</div>` : '';
+        return `
+            <tr>
+                <td><strong>${escapeHtml(d.ip)}</strong>${tag}</td>
+                <td>
+                    <div style="color:var(--text-primary);font-weight:500;">${escapeHtml(d.vendor)}</div>
+                    ${subHost}
+                </td>
+                <td style="font-size:0.69rem;color:var(--text-muted);">${escapeHtml(d.mac)}</td>
+                <td class="num-col down-text">${pingStr}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function revealDatabase() {

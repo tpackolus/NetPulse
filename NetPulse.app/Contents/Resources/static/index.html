@@ -24,7 +24,7 @@
                         <span class="brand-name">NetPulse</span>
                         <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
                     </div>
-                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.4.0</span>
+                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.5.0</span>
                 </div>
             </div>
 
@@ -75,9 +75,19 @@
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                         </svg>
-                        <span>Sockets &amp; Adapters</span>
+                        <span>Sockets &amp; LAN</span>
                     </span>
                     <span class="nav-badge" id="navConnBadge">0</span>
+                </button>
+
+                <button class="nav-item" data-view="speedtest" onclick="switchView('speedtest')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                        </svg>
+                        <span>Speedtest &amp; Outages</span>
+                    </span>
+                    <kbd class="nav-kbd">6</kbd>
                 </button>
             </nav>
 
@@ -151,7 +161,7 @@
                     </div>
 
                     <button class="btn btn-ghost btn-sm" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click OTA Update">
-                        <span id="topUpdateLabel">v2.4.0</span>
+                        <span id="topUpdateLabel">v2.5.0</span>
                     </button>
                 </div>
             </header>
@@ -236,8 +246,11 @@
 
                     <!-- Compact 4-Column Diagnostics Strip -->
                     <section class="diag-strip">
-                        <div class="diag-item" onclick="switchView('wifi')" style="cursor:pointer;" title="Click to open Wi-Fi Networks breakdown">
-                            <span class="diag-label">ACTIVE WI-FI / NETWORK</span>
+                        <div class="diag-item" onclick="switchView('wifi')" style="cursor:pointer;" title="Click to open Wi-Fi Networks &amp; Signal Quality">
+                            <div class="diag-label-row">
+                                <span class="diag-label">ACTIVE WI-FI &amp; SIGNAL</span>
+                                <span class="copy-hint" id="diagRadioChip">—</span>
+                            </div>
                             <span class="diag-value" id="diagProfile">Detecting...</span>
                             <span class="diag-sub" id="diagLocalIP">Local IP: —</span>
                             <span class="diag-sub wifi-usage-inline" id="diagWiFiUsage">Today: 0 B · Total: 0 B</span>
@@ -269,8 +282,8 @@
                         </div>
 
                         <div class="diag-item diag-item-action">
-                            <div>
-                                <span class="diag-label">MULTI-CDN SPEEDTEST</span>
+                            <div onclick="switchView('speedtest')" style="cursor:pointer;" title="Open Speedtest &amp; Outages view">
+                                <span class="diag-label">BIDIRECTIONAL SPEEDTEST</span>
                                 <span class="diag-value" id="diagSpeedtestVal">Ready to test</span>
                                 <span class="diag-sub" id="diagDbSize">SQLite DB: — KB</span>
                             </div>
@@ -356,9 +369,33 @@
                 </div>
 
                 <!-- =========================================================
-                     VIEW 2: WI-FI NETWORKS (Per-SSID Consumption)
+                     VIEW 2: WI-FI NETWORKS & RADIO SIGNAL QUALITY
                      ========================================================= -->
                 <div id="view-wifi" class="view-pane">
+                    <!-- Live CoreWLAN Radio & Signal Quality Strip -->
+                    <section class="summary-strip" style="margin-top:0;">
+                        <div class="strip-cell">
+                            <span class="strip-label">SIGNAL STRENGTH (RSSI)</span>
+                            <span class="strip-val" id="wifiRadioRssi">— dBm</span>
+                            <span class="strip-sub" id="wifiRadioQuality">Signal quality: —</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">NOISE FLOOR &amp; SNR</span>
+                            <span class="strip-val" id="wifiRadioSnr">— dB SNR</span>
+                            <span class="strip-sub" id="wifiRadioNoise">Noise floor: — dBm</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">BAND &amp; CHANNEL</span>
+                            <span class="strip-val" id="wifiRadioBand">—</span>
+                            <span class="strip-sub" id="wifiRadioChannel">Channel: —</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">PHY LINK RATE &amp; MODE</span>
+                            <span class="strip-val down-text" id="wifiRadioTx">— Mbps</span>
+                            <span class="strip-sub" id="wifiRadioStd">Standard: —</span>
+                        </div>
+                    </section>
+
                     <section class="summary-strip summary-strip-3" style="margin-top:0;">
                         <div class="strip-cell">
                             <span class="strip-label">CONNECTED WI-FI NETWORK</span>
@@ -373,7 +410,7 @@
                         <div class="strip-cell">
                             <span class="strip-label">KNOWN &amp; TRACKED WI-FI NETWORKS</span>
                             <span class="strip-val" id="wifiSumCounts">0 Active / 0 Saved</span>
-                            <span class="strip-sub">Click any row below for 30-day daily chart</span>
+                            <span class="strip-sub">Click any row for per-Wi-Fi apps, Hotspot quota &amp; 30d chart</span>
                         </div>
                     </section>
 
@@ -643,14 +680,127 @@
                             </div>
                         </section>
 
+                        <div class="side-col-stack">
+                            <section class="surface-panel">
+                                <div class="panel-head">
+                                    <div class="panel-titles">
+                                        <h2 class="section-title">LAN Device Scanner (<span id="lanDeviceCount">0</span>)</h2>
+                                        <p class="section-subtitle">Discover devices on your current Wi-Fi / subnet (ARP + OUI + Ping)</p>
+                                    </div>
+                                    <button class="btn btn-primary btn-xs" id="lanScanBtn" onclick="triggerLanScan()">Scan Subnet</button>
+                                </div>
+                                <div class="table-container" style="max-height: 235px;">
+                                    <table class="pro-table compact">
+                                        <thead>
+                                            <tr>
+                                                <th>IP Address</th>
+                                                <th>Vendor / Host</th>
+                                                <th>MAC</th>
+                                                <th class="num-col">Ping</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="lanDevicesBody">
+                                            <tr><td colspan="4" style="text-align:center;color:var(--text-muted);">Click "Scan Subnet" to discover local devices</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+
+                            <section class="surface-panel">
+                                <div class="panel-head">
+                                    <div class="panel-titles">
+                                        <h2 class="section-title">Hardware &amp; VPN Interfaces</h2>
+                                        <p class="section-subtitle">Kernel adapter counters via getifaddrs()</p>
+                                    </div>
+                                </div>
+                                <div class="iface-stack" id="interfacesList" style="max-height: 215px;"></div>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 6: SPEEDTEST & CONNECTION OUTAGES
+                     ========================================================= -->
+                <div id="view-speedtest" class="view-pane">
+                    <section class="surface-panel">
+                        <div class="panel-head">
+                            <div class="panel-titles">
+                                <h2 class="section-title">Bidirectional Multi-CDN Line Benchmark</h2>
+                                <p class="section-subtitle" id="speedtestPhaseLabel">Measures ICMP latency, jitter, multi-stream CDN download &amp; upload throughput</p>
+                            </div>
+                            <button class="btn btn-primary" id="fullSpeedtestBtn" onclick="triggerSpeedtest()">Start Full Speedtest</button>
+                        </div>
+
+                        <div class="summary-strip" style="margin-top: 4px;">
+                            <div class="strip-cell">
+                                <span class="strip-label">DOWNLOAD SPEED</span>
+                                <span class="strip-val down-text" id="stCardDown">— Mbps</span>
+                                <span class="strip-sub">Google + Apple + Cloudflare CDN</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">UPLOAD SPEED</span>
+                                <span class="strip-val up-text" id="stCardUp">— Mbps</span>
+                                <span class="strip-sub">Multi-stream HTTPS POST</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">LATENCY (PING)</span>
+                                <span class="strip-val" id="stCardPing">— ms</span>
+                                <span class="strip-sub">1.1.1.1 Anycast ICMP</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">JITTER (STABILITY)</span>
+                                <span class="strip-val" id="stCardJitter">— ms</span>
+                                <span class="strip-sub">Packet delay variation</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="overview-split">
                         <section class="surface-panel">
                             <div class="panel-head">
                                 <div class="panel-titles">
-                                    <h2 class="section-title">Hardware &amp; VPN Interfaces</h2>
-                                    <p class="section-subtitle">Kernel adapter counters via getifaddrs()</p>
+                                    <h2 class="section-title">Speedtest History by Wi-Fi (<span id="stHistCount">0</span>)</h2>
+                                    <p class="section-subtitle">Saved benchmark runs linked to the active Wi-Fi SSID</p>
                                 </div>
                             </div>
-                            <div class="iface-stack" id="interfacesList"></div>
+                            <div class="table-container" style="max-height: 360px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Date &amp; Time</th>
+                                            <th>Wi-Fi SSID</th>
+                                            <th class="num-col">Download</th>
+                                            <th class="num-col">Upload</th>
+                                            <th class="num-col">Ping / Jitter</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="speedtestHistoryBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Connection Outage Log (<span id="outageCount">0</span>)</h2>
+                                    <p class="section-subtitle">Automatic log of internet drops &amp; recovery durations</p>
+                                </div>
+                            </div>
+                            <div class="table-container" style="max-height: 360px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Outage Start</th>
+                                            <th>Recovered</th>
+                                            <th class="num-col">Duration</th>
+                                            <th>Network</th>
+                                            <th>Details</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="outageLogBody"></tbody>
+                                </table>
+                            </div>
                         </section>
                     </div>
                 </div>
@@ -718,18 +868,31 @@
         </div>
     </div>
 
-    <!-- Wi-Fi Network 30-Day Inspector Modal -->
+    <!-- Wi-Fi Network 30-Day, Per-App & Hotspot Quota Inspector Modal -->
     <div id="wifiDetailModal" class="modal-backdrop hidden" onclick="if(event.target===this)closeWifiInspector()">
         <div class="modal-dialog modal-lg">
             <div class="modal-head">
                 <div>
                     <h3 class="modal-title" id="inspectorWifiTitle">Wi-Fi Network History</h3>
-                    <p class="modal-subtitle">Last 30 days of recorded data consumption on this Wi-Fi network</p>
+                    <p class="modal-subtitle">30-day bandwidth chart, applications used on this Wi-Fi &amp; Mobile Hotspot quota</p>
                 </div>
                 <button class="btn-close" onclick="closeWifiInspector()">&times;</button>
             </div>
             <div class="modal-content">
-                <div class="summary-strip summary-strip-3" style="margin-top:0;margin-bottom:12px;">
+                <!-- Hotspot / Metered Wi-Fi Limit Bar -->
+                <div class="hotspot-config-bar">
+                    <label class="hotspot-check">
+                        <input type="checkbox" id="wifiModalMeteredCheck">
+                        <span>Metered / Mobile Hotspot Network</span>
+                    </label>
+                    <div class="hotspot-limit-right">
+                        <label for="wifiModalLimitGb" style="font-size:0.73rem;color:var(--text-secondary);">Monthly Cap (GB):</label>
+                        <input type="number" step="0.5" min="0" id="wifiModalLimitGb" class="input-control" style="width:90px;" placeholder="0">
+                        <button class="btn btn-primary btn-xs" onclick="saveCurrentWifiLimit()">Save Wi-Fi Limit</button>
+                    </div>
+                </div>
+
+                <div class="summary-strip summary-strip-3" style="margin-top:10px;margin-bottom:12px;">
                     <div class="strip-cell">
                         <span class="strip-label">30-DAY TOTAL</span>
                         <span class="strip-val" id="wifiInspTotal">0 B</span>
@@ -743,21 +906,41 @@
                         <span class="strip-val up-text" id="wifiInspOut">0 B</span>
                     </div>
                 </div>
-                <div class="chart-frame" style="height:185px;margin-bottom:12px;">
+                <div class="chart-frame" style="height:165px;margin-bottom:12px;">
                     <canvas id="wifiDetailCanvas"></canvas>
                 </div>
-                <div class="table-container" style="max-height:200px;">
-                    <table class="pro-table compact">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th class="num-col">Download</th>
-                                <th class="num-col">Upload</th>
-                                <th class="num-col">Daily Total</th>
-                            </tr>
-                        </thead>
-                        <tbody id="wifiInspectorBody"></tbody>
-                    </table>
+                <div class="overview-split" style="gap:12px;">
+                    <div>
+                        <div class="strip-label" style="margin-bottom:6px;">TOP APPLICATIONS ON THIS WI-FI</div>
+                        <div class="table-container" style="max-height:185px;">
+                            <table class="pro-table compact">
+                                <thead>
+                                    <tr>
+                                        <th>Application</th>
+                                        <th class="num-col">Download</th>
+                                        <th class="num-col">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wifiInspectorAppsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="strip-label" style="margin-bottom:6px;">DAILY BREAKDOWN (LAST 30 DAYS)</div>
+                        <div class="table-container" style="max-height:185px;">
+                            <table class="pro-table compact">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th class="num-col">Download</th>
+                                        <th class="num-col">Upload</th>
+                                        <th class="num-col">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wifiInspectorBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="modal-actions">
@@ -779,7 +962,7 @@
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.4.0)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.5.0)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>

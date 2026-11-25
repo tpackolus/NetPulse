@@ -1686,3 +1686,48 @@ canvas {
         display: none;
     }
 }
+
+/* ==========================================================================
+   v2.5.0 Pro Extensions: Hotspot Quotas, LAN Scanner & Speedtest
+   ========================================================================== */
+.side-col-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+.hotspot-config-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 10px 13px;
+}
+
+.hotspot-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.hotspot-limit-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.wifi-hotspot-badge {
+    background: rgba(245, 158, 11, 0.16);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.36);
+}
+

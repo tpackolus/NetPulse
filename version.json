@@ -1,7 +1,7 @@
 {
-  "version": "2.4.0",
-  "build": 240,
+  "version": "2.5.0",
+  "build": 250,
   "release_date": "2026-11-25",
   "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
-  "notes": "v2.4.0 — Complete macOS Sidebar UI Redesign: 5 dedicated views (Overview, Wi-Fi Networks, History, Applications, Sockets & Adapters), interactive chart hover tooltips, sortable tables, and 30-day per-Wi-Fi SSID inspector."
+  "notes": "v2.5.0 — Added all 6 Pro features: Per-Wi-Fi App Usage & Hotspot Quotas, Bidirectional Speedtest (Down+Up+Ping+Jitter) with Wi-Fi History, Graphical Menu Bar Popover, Live CoreWLAN Signal Telemetry, Outage Log + macOS Notifications, and LAN Subnet Scanner."
 }

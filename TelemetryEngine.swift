@@ -1,4 +1,6 @@
 import Cocoa
+import CoreWLAN
+import Darwin
 import Foundation
 
 final class TelemetryEngine {
@@ -34,8 +36,16 @@ final class TelemetryEngine {
 
     var diagnostics = DiagnosticsInfo()
     var preferredWiFiSSIDs: [String] = []
+    var lanDevices: [LanDeviceRow] = []
     var geoCache: [String: String] = [:]
     var geoIntelCache: [String: GeoIntelEntry] = [:]
+
+    private var outageStartTs: Int64?
+    private var outageStartStr: String = ""
+    private var outageSSID: String = ""
+    private var consecutivePingFails: Int = 0
+    private var lastKnownPublicIP: String = ""
+    private var notifiedQuotaKeys: Set<String> = []
 
     private let friendlyAppMap: [String: String] = [
         "Google Chrome H": "Google Chrome",
@@ -502,15 +512,144 @@ final class TelemetryEngine {
         }
 
         SQLiteManager.shared.attributeGenericWiFiRowsIfNeeded(activeSSID: profile)
+        let radio = readCoreWLANRadio()
 
         lock.lock()
         diagnostics.local_ip = ip
         diagnostics.router_ip = router
         diagnostics.network_profile = profile
+        diagnostics.wifi_rssi = radio.rssi
+        diagnostics.wifi_noise = radio.noise
+        diagnostics.wifi_snr = radio.snr
+        diagnostics.wifi_tx_rate = radio.txRate
+        diagnostics.wifi_band = radio.band
+        diagnostics.wifi_channel = radio.channel
+        diagnostics.wifi_width = radio.width
+        diagnostics.wifi_standard = radio.standard
+        diagnostics.wifi_quality_pct = radio.qualityPct
         if !prefList.isEmpty {
             preferredWiFiSSIDs = prefList
         }
         lock.unlock()
+
+        checkQuotaAndHotspotAlerts(activeSSID: profile)
+    }
+
+    private func readCoreWLANRadio() -> (rssi: Int, noise: Int, snr: Int, txRate: Double, band: String, channel: Int, width: String, standard: String, qualityPct: Int) {
+        guard let iface = CWWiFiClient.shared().interface() else {
+            return (0, 0, 0, 0, "—", 0, "—", "—", 0)
+        }
+        let rssi = iface.rssiValue()
+        let noise = iface.noiseMeasurement()
+        let tx = round(iface.transmitRate() * 10) / 10
+        let chNum = iface.wlanChannel()?.channelNumber ?? 0
+        guard rssi != 0 || chNum != 0 else {
+            return (0, 0, 0, 0, "—", 0, "—", "—", 0)
+        }
+
+        let snr = (noise < 0 && rssi < 0) ? max(0, rssi - noise) : 0
+        // Convert RSSI (-90..-35 dBm) to intuitive 0..100% signal quality
+        let pct = min(100, max(5, Int(round(Double(rssi + 92) * (100.0 / 52.0)))))
+
+        var bandStr = "—"
+        if let ch = iface.wlanChannel() {
+            switch ch.channelBand {
+            case .band2GHz: bandStr = "2.4 GHz"
+            case .band5GHz: bandStr = "5 GHz"
+            case .band6GHz: bandStr = "6 GHz"
+            default: bandStr = chNum > 14 ? "5 GHz" : "2.4 GHz"
+            }
+        }
+
+        var widthStr = "20 MHz"
+        if let ch = iface.wlanChannel() {
+            switch ch.channelWidth {
+            case .width20MHz: widthStr = "20 MHz"
+            case .width40MHz: widthStr = "40 MHz"
+            case .width80MHz: widthStr = "80 MHz"
+            case .width160MHz: widthStr = "160 MHz"
+            default: widthStr = "Auto"
+            }
+        }
+
+        let stdStr: String
+        switch iface.activePHYMode() {
+        case .mode11ax: stdStr = "Wi-Fi 6 (802.11ax)"
+        case .mode11ac: stdStr = "Wi-Fi 5 (802.11ac)"
+        case .mode11n:  stdStr = "Wi-Fi 4 (802.11n)"
+        case .mode11a:  stdStr = "802.11a"
+        case .mode11g:  stdStr = "802.11g"
+        case .mode11b:  stdStr = "802.11b"
+        default:        stdStr = "802.11 WLAN"
+        }
+
+        return (rssi, noise, snr, tx, bandStr, chNum, widthStr, stdStr, pct)
+    }
+
+    func sendNativeNotification(title: String, body: String) {
+        let safeTitle = title.replacingOccurrences(of: "\"", with: "'").replacingOccurrences(of: "\\", with: "")
+        let safeBody = body.replacingOccurrences(of: "\"", with: "'").replacingOccurrences(of: "\\", with: "")
+        Thread.detachNewThread { [weak self] in
+            _ = self?.runCommand("/usr/bin/osascript", ["-e", "display notification \"\(safeBody)\" with title \"\(safeTitle)\""])
+        }
+    }
+
+    private func checkQuotaAndHotspotAlerts(activeSSID: String) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let todayKey = fmt.string(from: Date())
+
+        let settings = SQLiteManager.shared.getSettings()
+        let warnPct = Double(settings["alert_threshold_pct"] ?? "85") ?? 85.0
+        let dailyGb = Double(settings["daily_limit_gb"] ?? "0") ?? 0.0
+        let summaries = SQLiteManager.shared.getSummaries()
+
+        if dailyGb > 0 {
+            let usedPct = (Double(summaries.today.total) / (dailyGb * 1073741824.0)) * 100.0
+            if usedPct >= 100.0 {
+                let key = "daily_100_\(todayKey)"
+                lock.lock()
+                let already = notifiedQuotaKeys.contains(key)
+                if !already { notifiedQuotaKeys.insert(key) }
+                lock.unlock()
+                if !already {
+                    sendNativeNotification(title: "NetPulse — Daily Quota Exceeded", body: "You have exceeded your \(dailyGb) GB daily bandwidth quota.")
+                }
+            } else if usedPct >= warnPct {
+                let key = "daily_warn_\(todayKey)"
+                lock.lock()
+                let already = notifiedQuotaKeys.contains(key)
+                if !already { notifiedQuotaKeys.insert(key) }
+                lock.unlock()
+                if !already {
+                    sendNativeNotification(title: "NetPulse — Daily Quota Warning", body: String(format: "Used %.0f%% of your %.1f GB daily bandwidth quota.", usedPct, dailyGb))
+                }
+            }
+        }
+
+        let wifiRows = SQLiteManager.shared.getWiFiUsage(activeProfile: activeSSID)
+        if let activeRow = wifiRows.first(where: { $0.ssid == activeSSID && $0.is_metered && $0.limit_gb > 0 }) {
+            let usedPct = (Double(activeRow.month_total) / (activeRow.limit_gb * 1073741824.0)) * 100.0
+            if usedPct >= 100.0 {
+                let key = "wifi_100_\(activeSSID)_\(todayKey)"
+                lock.lock()
+                let already = notifiedQuotaKeys.contains(key)
+                if !already { notifiedQuotaKeys.insert(key) }
+                lock.unlock()
+                if !already {
+                    sendNativeNotification(title: "NetPulse — Hotspot Limit Reached", body: "Wi-Fi '\(activeSSID)' reached 100% of its \(activeRow.limit_gb) GB limit.")
+                }
+            } else if usedPct >= warnPct {
+                let key = "wifi_warn_\(activeSSID)_\(todayKey)"
+                lock.lock()
+                let already = notifiedQuotaKeys.contains(key)
+                if !already { notifiedQuotaKeys.insert(key) }
+                lock.unlock()
+                if !already {
+                    sendNativeNotification(title: "NetPulse — Hotspot Limit Warning", body: String(format: "Wi-Fi '%@' is at %.0f%% of its %.1f GB limit.", activeSSID, usedPct, activeRow.limit_gb))
+                }
+            }
+        }
     }
 
     private func parsePingMs(_ output: String) -> Double {
@@ -525,6 +664,8 @@ final class TelemetryEngine {
     private func updatePingMetrics() {
         lock.lock()
         let router = diagnostics.router_ip
+        let currentProfile = diagnostics.network_profile
+        let localIP = diagnostics.local_ip
         lock.unlock()
 
         var routerMs: Double = -1
@@ -533,11 +674,58 @@ final class TelemetryEngine {
             routerMs = parsePingMs(outR)
         }
         let outI = runCommand("/sbin/ping", ["-c", "1", "-t", "1", "1.1.1.1"])
-        let internetMs = parsePingMs(outI)
+        var internetMs = parsePingMs(outI)
+        if internetMs < 0 {
+            // Secondary check to 8.8.8.8 before declaring an internet outage
+            let outBackup = runCommand("/sbin/ping", ["-c", "1", "-t", "1", "8.8.8.8"])
+            internetMs = parsePingMs(outBackup)
+        }
+
+        let now = Date()
+        let nowTs = Int64(now.timeIntervalSince1970)
+        let dtFmt = DateFormatter()
+        dtFmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
 
         lock.lock()
         diagnostics.ping_router_ms = routerMs
         diagnostics.ping_internet_ms = internetMs
+
+        if localIP != "—" && currentProfile != "Disconnected" {
+            if internetMs < 0 {
+                consecutivePingFails += 1
+                if consecutivePingFails == 2 && outageStartTs == nil {
+                    outageStartTs = nowTs - 5
+                    outageStartStr = dtFmt.string(from: now.addingTimeInterval(-5))
+                    outageSSID = currentProfile
+                    let reasonMsg = routerMs < 0 ? "Gateway & Internet Unreachable" : "ISP Upstream Outage (Gateway OK)"
+                    lock.unlock()
+                    sendNativeNotification(title: "NetPulse — Connection Lost", body: "\(reasonMsg) on \(currentProfile)")
+                    return
+                }
+            } else {
+                if let startTs = outageStartTs {
+                    let dur = max(1, Int(nowTs - startTs))
+                    let sStr = outageStartStr
+                    let eStr = dtFmt.string(from: now)
+                    let ssid = outageSSID
+                    outageStartTs = nil
+                    consecutivePingFails = 0
+                    lock.unlock()
+                    SQLiteManager.shared.insertOutage(
+                        startTs: startTs,
+                        endTs: nowTs,
+                        startStr: sStr,
+                        endStr: eStr,
+                        durationSec: dur,
+                        ssid: ssid,
+                        reason: "Internet Timeout Recovered"
+                    )
+                    sendNativeNotification(title: "NetPulse — Internet Restored", body: "Connection on \(ssid) recovered after \(dur)s outage.")
+                    return
+                }
+                consecutivePingFails = 0
+            }
+        }
         lock.unlock()
     }
 
@@ -605,6 +793,8 @@ final class TelemetryEngine {
                 let isp = known?.asnIsp ?? "Active Internet Gateway"
 
                 self.lock.lock()
+                let prevPub = self.lastKnownPublicIP
+                self.lastKnownPublicIP = detectedIP
                 self.diagnostics.public_ip = detectedIP
                 if self.diagnostics.isp_org == "—" || self.diagnostics.isp_org.isEmpty {
                     self.diagnostics.isp_org = isp
@@ -613,6 +803,10 @@ final class TelemetryEngine {
                     self.diagnostics.country_city = cName
                 }
                 self.lock.unlock()
+
+                if !prevPub.isEmpty && prevPub != detectedIP {
+                    self.sendNativeNotification(title: "NetPulse — Public IP Changed", body: "New Public IP: \(detectedIP) (\(cName))")
+                }
             }
 
             // Step 2: Enrich with city & ISP details via ip-api.com or ipwho.is if available
@@ -666,7 +860,7 @@ final class TelemetryEngine {
         }
     }
 
-    // MARK: - Built-in Multi-CDN Live Speedtest (Google CDN + Apple CDN + Cloudflare + Interface Delta Tracking)
+    // MARK: - Bidirectional Multi-CDN Speedtest (Ping + Jitter + Download + Upload + SQLite History)
     func runSpeedtest() {
         lock.lock()
         if diagnostics.speedtest_running {
@@ -674,85 +868,324 @@ final class TelemetryEngine {
             return
         }
         diagnostics.speedtest_running = true
-        diagnostics.speedtest_down_mbps = 0.1
+        diagnostics.speedtest_down_mbps = 0
+        diagnostics.speedtest_up_mbps = 0
+        diagnostics.speedtest_phase = "Measuring Latency & Jitter..."
+        let currentSSID = diagnostics.network_profile
         lock.unlock()
 
         Thread.detachNewThread { [weak self] in
             guard let self = self else { return }
-
-            let startIface = self.readNetstat()
-            let startTime = Date().timeIntervalSince1970
-
-            // Spawn three high-speed parallel CDN download streams for up to 5.5 seconds:
-            // 1) Google global CDN (dl.google.com - never blocked on campus/enterprise networks)
-            // 2) Apple's official macOS networkQuality CDN (mensura.cdn-apple.com)
-            // 3) Cloudflare global speedtest CDN
-            let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            var procs: [Process] = []
-            let urls = [
-                "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg",
-                "https://mensura.cdn-apple.com/api/v1/gm/large",
-                "https://speed.cloudflare.com/__down?bytes=40000000"
-            ]
-
-            for u in urls {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-                p.arguments = ["-s", "-L", "-k", "-A", ua, "-o", "/dev/null", "--max-time", "5", u]
-                p.standardOutput = FileHandle.nullDevice
-                p.standardError = FileHandle.nullDevice
-                try? p.run()
-                procs.append(p)
-            }
-
-            var peakMbps: Double = 0.0
-            var totalRxBytes: Int64 = 0
-
-            // Sample live kernel interface counters every 0.5s during the 5-second benchmark
-            for _ in 0..<10 {
-                Thread.sleep(forTimeInterval: 0.5)
-                let nowIface = self.readNetstat()
-                let elapsed = max(0.25, Date().timeIntervalSince1970 - startTime)
-                var rxDelta: Int64 = 0
-                for (ifName, stats) in nowIface where ifName != "lo0" {
-                    if let prev = startIface[ifName] {
-                        rxDelta += max(0, stats.0 - prev.0)
-                    }
+            autoreleasepool {
+                // Phase 1: Ping & Jitter (5 rapid ICMP samples to 1.1.1.1)
+                let pingOut = self.runCommand("/sbin/ping", ["-c", "5", "-i", "0.2", "-t", "3", "1.1.1.1"])
+                var samples: [Double] = []
+                for line in pingOut.components(separatedBy: .newlines) {
+                    let ms = self.parsePingMs(line)
+                    if ms >= 0 { samples.append(ms) }
                 }
-                totalRxBytes = rxDelta
-                let avgMbps = (Double(rxDelta) * 8.0) / (elapsed * 1_000_000.0)
-                let instantMbps = (self.liveSpeedIn * 8.0) / 1_000_000.0
-                let currentEst = max(avgMbps, instantMbps * 0.85)
-                if currentEst > peakMbps {
-                    peakMbps = currentEst
+                var avgPing: Double = 0
+                var jitter: Double = 0
+                if !samples.isEmpty {
+                    avgPing = round((samples.reduce(0, +) / Double(samples.count)) * 10) / 10
+                    if samples.count >= 2 {
+                        var diffs: Double = 0
+                        for i in 1..<samples.count {
+                            diffs += abs(samples[i] - samples[i - 1])
+                        }
+                        jitter = round((diffs / Double(samples.count - 1)) * 10) / 10
+                    }
                 }
 
                 self.lock.lock()
-                if currentEst > 0.1 {
-                    self.diagnostics.speedtest_down_mbps = round(currentEst * 10) / 10
-                }
+                self.diagnostics.speedtest_ping_ms = avgPing
+                self.diagnostics.speedtest_jitter_ms = jitter
+                self.diagnostics.speedtest_phase = "Testing Download..."
                 self.lock.unlock()
 
-                let anyRunning = procs.contains(where: { $0.isRunning })
-                if !anyRunning && elapsed >= 1.5 {
-                    break
+                // Phase 2: Multi-CDN Parallel Download (~5s)
+                let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15"
+                let startRxIface = self.readNetstat()
+                let startRxTime = Date().timeIntervalSince1970
+                var downProcs: [Process] = []
+                let downURLs = [
+                    "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg",
+                    "https://mensura.cdn-apple.com/api/v1/gm/large",
+                    "https://speed.cloudflare.com/__down?bytes=50000000"
+                ]
+
+                for u in downURLs {
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+                    p.arguments = ["-s", "-L", "-k", "-A", ua, "-o", "/dev/null", "--max-time", "5", u]
+                    p.standardOutput = FileHandle.nullDevice
+                    p.standardError = FileHandle.nullDevice
+                    try? p.run()
+                    downProcs.append(p)
+                }
+
+                var peakDownMbps: Double = 0.0
+                var totalRxBytes: Int64 = 0
+                for _ in 0..<10 {
+                    Thread.sleep(forTimeInterval: 0.5)
+                    let nowIface = self.readNetstat()
+                    let elapsed = max(0.25, Date().timeIntervalSince1970 - startRxTime)
+                    var rxDelta: Int64 = 0
+                    for (ifName, stats) in nowIface where ifName != "lo0" {
+                        if let prev = startRxIface[ifName] {
+                            rxDelta += max(0, stats.0 - prev.0)
+                        }
+                    }
+                    totalRxBytes = rxDelta
+                    let avgMbps = (Double(rxDelta) * 8.0) / (elapsed * 1_000_000.0)
+                    let instantMbps = (self.liveSpeedIn * 8.0) / 1_000_000.0
+                    let currentEst = max(avgMbps, instantMbps * 0.85)
+                    if currentEst > peakDownMbps { peakDownMbps = currentEst }
+
+                    self.lock.lock()
+                    if currentEst > 0.1 {
+                        self.diagnostics.speedtest_down_mbps = round(currentEst * 10) / 10
+                    }
+                    self.lock.unlock()
+
+                    if !downProcs.contains(where: { $0.isRunning }) && elapsed >= 1.5 { break }
+                }
+                for p in downProcs where p.isRunning { p.terminate() }
+
+                let rxElapsed = max(0.5, Date().timeIntervalSince1970 - startRxTime)
+                let finalDown = round(max((Double(totalRxBytes) * 8.0) / (rxElapsed * 1_000_000.0), peakDownMbps * 0.9) * 10) / 10
+
+                self.lock.lock()
+                self.diagnostics.speedtest_down_mbps = max(0.1, finalDown)
+                self.diagnostics.speedtest_phase = "Testing Upload..."
+                self.lock.unlock()
+
+                // Phase 3: Parallel Multi-Stream Upload (~4.5s)
+                let tmpUploadPath = "/tmp/netpulse_upload_payload.bin"
+                let payloadData = Data(repeating: 0x5A, count: 6 * 1024 * 1024)
+                try? payloadData.write(to: URL(fileURLWithPath: tmpUploadPath))
+
+                let startTxIface = self.readNetstat()
+                let startTxTime = Date().timeIntervalSince1970
+                var upProcs: [Process] = []
+                let upTargets = [
+                    "https://speed.cloudflare.com/__up",
+                    "https://speed.cloudflare.com/__up",
+                    "https://mensura.cdn-apple.com/api/v1/gm/slurp"
+                ]
+                for u in upTargets {
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+                    p.arguments = ["-s", "-L", "-k", "-A", ua, "-X", "POST", "--data-binary", "@\(tmpUploadPath)", "-o", "/dev/null", "--max-time", "5", u]
+                    p.standardOutput = FileHandle.nullDevice
+                    p.standardError = FileHandle.nullDevice
+                    try? p.run()
+                    upProcs.append(p)
+                }
+
+                var peakUpMbps: Double = 0.0
+                var totalTxBytes: Int64 = 0
+                for _ in 0..<9 {
+                    Thread.sleep(forTimeInterval: 0.5)
+                    let nowIface = self.readNetstat()
+                    let elapsed = max(0.25, Date().timeIntervalSince1970 - startTxTime)
+                    var txDelta: Int64 = 0
+                    for (ifName, stats) in nowIface where ifName != "lo0" {
+                        if let prev = startTxIface[ifName] {
+                            txDelta += max(0, stats.1 - prev.1)
+                        }
+                    }
+                    totalTxBytes = txDelta
+                    let avgMbps = (Double(txDelta) * 8.0) / (elapsed * 1_000_000.0)
+                    let instantMbps = (self.liveSpeedOut * 8.0) / 1_000_000.0
+                    let currentEst = max(avgMbps, instantMbps * 0.85)
+                    if currentEst > peakUpMbps { peakUpMbps = currentEst }
+
+                    self.lock.lock()
+                    if currentEst > 0.1 {
+                        self.diagnostics.speedtest_up_mbps = round(currentEst * 10) / 10
+                    }
+                    self.lock.unlock()
+
+                    if !upProcs.contains(where: { $0.isRunning }) && elapsed >= 1.5 { break }
+                }
+                for p in upProcs where p.isRunning { p.terminate() }
+                try? FileManager.default.removeItem(atPath: tmpUploadPath)
+
+                let txElapsed = max(0.5, Date().timeIntervalSince1970 - startTxTime)
+                let finalUp = round(max((Double(totalTxBytes) * 8.0) / (txElapsed * 1_000_000.0), peakUpMbps * 0.9) * 10) / 10
+
+                self.lock.lock()
+                self.diagnostics.speedtest_down_mbps = finalDown
+                self.diagnostics.speedtest_up_mbps = finalUp
+                self.diagnostics.speedtest_phase = "Completed"
+                self.diagnostics.speedtest_running = false
+                self.lock.unlock()
+
+                if finalDown > 0 || finalUp > 0 {
+                    SQLiteManager.shared.insertSpeedtest(
+                        ssid: currentSSID,
+                        downMbps: finalDown,
+                        upMbps: finalUp,
+                        pingMs: avgPing,
+                        jitterMs: jitter
+                    )
                 }
             }
+        }
+    }
 
-            for p in procs where p.isRunning {
-                p.terminate()
+    // MARK: - Fast Zero-Subprocess ARP Sweep + OUI Vendor Lookup LAN Scanner
+    private let ouiVendors: [String: String] = [
+        "00:03:93": "Apple", "00:17:F2": "Apple", "28:CF:E9": "Apple", "3C:22:FB": "Apple",
+        "40:CB:C0": "Apple", "50:ED:3C": "Apple", "60:03:08": "Apple", "70:56:81": "Apple",
+        "84:94:37": "Apple", "90:9C:4A": "Apple", "A4:83:E7": "Apple", "AC:BC:32": "Apple",
+        "BC:D0:74": "Apple", "DC:A9:04": "Apple", "F0:18:98": "Apple", "F8:FF:C2": "Apple",
+        "18:E8:29": "Ubiquiti", "24:5A:4C": "Ubiquiti", "74:83:C2": "Ubiquiti", "FC:EC:DA": "Ubiquiti",
+        "08:55:31": "MikroTik", "18:FD:74": "MikroTik", "2C:C8:1B": "MikroTik", "48:8F:5A": "MikroTik",
+        "4C:5E:0C": "MikroTik", "64:D1:54": "MikroTik", "74:4D:28": "MikroTik", "B8:69:F4": "MikroTik",
+        "C4:AD:34": "MikroTik", "DC:2C:6E": "MikroTik", "E4:8D:8C": "MikroTik",
+        "14:CC:20": "TP-Link", "18:D6:C7": "TP-Link", "30:B5:C2": "TP-Link", "50:C7:BF": "TP-Link",
+        "60:32:B1": "TP-Link", "70:4F:57": "TP-Link", "98:DA:C4": "TP-Link", "B0:BE:76": "TP-Link",
+        "C0:25:E9": "TP-Link", "E8:DE:27": "TP-Link", "F4:F2:6D": "TP-Link",
+        "28:6B:5C": "Cisco Systems", "00:1B:54": "Cisco Systems", "00:25:84": "Cisco Systems",
+        "B8:27:EB": "Raspberry Pi", "DC:A6:32": "Raspberry Pi", "E4:5F:01": "Raspberry Pi",
+        "00:1A:79": "Teltonika", "00:1E:42": "Teltonika", "20:97:27": "Teltonika",
+        "04:CF:8C": "Xiaomi", "28:6C:07": "Xiaomi", "64:09:80": "Xiaomi", "78:11:DC": "Xiaomi",
+        "24:F5:A2": "Belkin / Linksys", "04:D4:C4": "ASUS", "2C:56:DC": "ASUS",
+        "3C:28:6D": "Google", "54:60:09": "Google", "F4:F5:D8": "Google",
+        "00:0C:29": "VMware", "00:50:56": "VMware", "00:1C:42": "Parallels"
+    ]
+
+    private func resolveMacVendor(_ mac: String) -> String {
+        let parts = mac.uppercased().split(separator: ":").map { part -> String in
+            part.count == 1 ? "0\(part)" : String(part)
+        }
+        guard parts.count >= 3 else { return "Network Device" }
+        let prefix = "\(parts[0]):\(parts[1]):\(parts[2])"
+        if let v = ouiVendors[prefix] { return v }
+        // Check Locally Administered MAC bit (iOS/macOS Private Wi-Fi Address)
+        if let firstByte = UInt8(parts[0], radix: 16), (firstByte & 0x02) != 0 {
+            return "Private MAC (Mobile / Apple)"
+        }
+        return "LAN Host"
+    }
+
+    func runLanScan() {
+        lock.lock()
+        if diagnostics.lan_scanning {
+            lock.unlock()
+            return
+        }
+        diagnostics.lan_scanning = true
+        let myIP = diagnostics.local_ip
+        let gwIP = diagnostics.router_ip
+        lock.unlock()
+
+        Thread.detachNewThread { [weak self] in
+            guard let self = self else { return }
+            autoreleasepool {
+                defer {
+                    self.lock.lock()
+                    self.diagnostics.lan_scanning = false
+                    self.lock.unlock()
+                }
+
+                let octets = myIP.split(separator: ".")
+                if octets.count == 4 {
+                    let subnetPrefix = "\(octets[0]).\(octets[1]).\(octets[2])"
+                    // Trigger kernel ARP discovery across /24 using a single UDP socket (zero subprocesses)
+                    let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                    if sock >= 0 {
+                        var flags = fcntl(sock, F_GETFL, 0)
+                        flags |= O_NONBLOCK
+                        _ = fcntl(sock, F_SETFL, flags)
+                        var payload: UInt8 = 0
+                        for host in 1...254 {
+                            let targetIP = "\(subnetPrefix).\(host)"
+                            if targetIP == myIP { continue }
+                            var addr = sockaddr_in()
+                            addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+                            addr.sin_family = sa_family_t(AF_INET)
+                            addr.sin_port = in_port_t(33434).bigEndian
+                            _ = targetIP.withCString { inet_pton(AF_INET, $0, &addr.sin_addr) }
+                            withUnsafePointer(to: &addr) {
+                                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
+                                    _ = sendto(sock, &payload, 1, 0, saPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                                }
+                            }
+                        }
+                        close(sock)
+                        Thread.sleep(forTimeInterval: 0.9)
+                    }
+                }
+
+                let arpOut = self.runCommand("/usr/sbin/arp", ["-a"])
+                var discovered: [LanDeviceRow] = []
+                var seenIPs = Set<String>()
+
+                if myIP != "—" && !myIP.isEmpty {
+                    seenIPs.insert(myIP)
+                    discovered.append(LanDeviceRow(
+                        ip: myIP,
+                        mac: "Local Adapter",
+                        vendor: "This Mac",
+                        hostname: Host.current().localizedName ?? "This Mac",
+                        latency_ms: 0.1,
+                        is_gateway: false,
+                        is_self: true
+                    ))
+                }
+
+                for line in arpOut.components(separatedBy: .newlines) {
+                    if line.contains("(incomplete)") || line.contains("ff:ff:ff:ff:ff:ff") { continue }
+                    guard let openP = line.firstIndex(of: "("),
+                          let closeP = line.firstIndex(of: ")"),
+                          openP < closeP else { continue }
+                    let ip = String(line[line.index(after: openP)..<closeP])
+                    if ip.hasPrefix("224.") || ip.hasPrefix("239.") || ip.hasSuffix(".255") || seenIPs.contains(ip) { continue }
+
+                    var hostName = String(line[..<openP]).trimmingCharacters(in: .whitespaces)
+                    if hostName == "?" || hostName.isEmpty { hostName = "—" }
+
+                    var mac = "—"
+                    if let atRange = line.range(of: " at ") {
+                        let afterAt = line[atRange.upperBound...]
+                        if let spaceIdx = afterAt.firstIndex(of: " ") {
+                            mac = String(afterAt[..<spaceIdx])
+                        }
+                    }
+                    guard mac != "—" && mac.contains(":") else { continue }
+
+                    seenIPs.insert(ip)
+                    let isGw = (ip == gwIP)
+                    let pingRes = self.runCommand("/sbin/ping", ["-c", "1", "-W", "250", ip])
+                    let ms = self.parsePingMs(pingRes)
+                    let vendor = self.resolveMacVendor(mac)
+
+                    discovered.append(LanDeviceRow(
+                        ip: ip,
+                        mac: mac.uppercased(),
+                        vendor: isGw ? "\(vendor) (Gateway)" : vendor,
+                        hostname: hostName,
+                        latency_ms: ms,
+                        is_gateway: isGw,
+                        is_self: false
+                    ))
+                }
+
+                discovered.sort { a, b in
+                    if a.is_gateway != b.is_gateway { return a.is_gateway }
+                    if a.is_self != b.is_self { return a.is_self }
+                    let aLast = Int(a.ip.split(separator: ".").last ?? "999") ?? 999
+                    let bLast = Int(b.ip.split(separator: ".").last ?? "999") ?? 999
+                    return aLast < bLast
+                }
+
+                self.lock.lock()
+                self.lanDevices = discovered
+                self.lock.unlock()
             }
-
-            let totalElapsed = max(0.5, Date().timeIntervalSince1970 - startTime)
-            let finalAvgMbps = (Double(totalRxBytes) * 8.0) / (totalElapsed * 1_000_000.0)
-            let finalResult = max(finalAvgMbps, peakMbps * 0.9)
-
-            self.lock.lock()
-            if finalResult > 0.1 {
-                self.diagnostics.speedtest_down_mbps = round(finalResult * 10) / 10
-            }
-            self.diagnostics.speedtest_running = false
-            self.lock.unlock()
         }
     }
 
@@ -1061,8 +1494,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.4.0"
-    let currentAppBuild = 240
+    let currentAppVersion = "2.5.0"
+    let currentAppBuild = 250
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }
