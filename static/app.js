@@ -1,16 +1,52 @@
 /**
- * NetPulse macOS — Native Telemetry Frontend Controller (English UI)
+ * NetPulse macOS v2.4.0 — Native Telemetry Studio Frontend Controller
  */
 
+const VIEW_META = {
+    overview: {
+        title: 'Live Telemetry Overview',
+        subtitle: 'Real-time throughput, active Wi-Fi & top processes'
+    },
+    wifi: {
+        title: 'Wi-Fi Networks',
+        subtitle: 'Data consumption tracked automatically per Wi-Fi SSID'
+    },
+    history: {
+        title: 'History & Analytics',
+        subtitle: 'Hourly, daily & monthly transfer logs with CSV/JSON export'
+    },
+    apps: {
+        title: 'Applications & Processes',
+        subtitle: 'Per-process bandwidth matrix, open sockets & 24h profiles'
+    },
+    network: {
+        title: 'Sockets, GeoIP & Adapters',
+        subtitle: 'Live TCP/UDP endpoint security audit & hardware interfaces'
+    }
+};
+
 const state = {
+    activeView: 'overview',
     selectedInterface: 'all',
     currentPreset: 'today',
     realtimePaused: false,
     appViewMode: 'live',
-    wifiViewMode: 'all',
+    wifiViewMode: 'used',
+    socketFilter: 'all',
+    wifiSortCol: 'all_total',
+    wifiSortDir: 'desc',
+    appSortCol: 'metric',
+    appSortDir: 'desc',
     theme: 'dark',
+    isPointerDown: false,
     realtimeData: null,
     historyData: null,
+    connectionsData: [],
+    latestDiagnostics: null,
+    hoverRealtimeIdx: -1,
+    hoverBarCanvas: null,
+    hoverBarIdx: -1,
+    barChartCache: {},
     settings: {
         daily_limit_gb: '0',
         weekly_limit_gb: '0',
@@ -22,6 +58,10 @@ const state = {
     knownInterfaces: new Set(['all'])
 };
 
+let toastTimer = null;
+let inspectorRefreshTimer = null;
+let currentInspectedApp = null;
+
 function formatBytes(bytes, decimals = 2) {
     if (!bytes || bytes <= 0) return '0 B';
     const k = 1024;
@@ -30,6 +70,11 @@ function formatBytes(bytes, decimals = 2) {
     const val = bytes / Math.pow(k, i);
     const dec = i >= 3 ? decimals : (i === 2 ? 1 : 0);
     return `${val.toFixed(dec)} ${sizes[i]}`;
+}
+
+function formatBytesOrDash(bytes) {
+    if (!bytes || bytes <= 0) return '<span class="muted-dash">—</span>';
+    return formatBytes(bytes);
 }
 
 function formatSpeed(bytesPerSec) {
@@ -44,10 +89,29 @@ function toISODate(d) {
     return `${year}-${month}-${day}`;
 }
 
+function escapeHtml(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 function postNativeAction(payload) {
     if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.netpulseNative) {
         window.webkit.messageHandlers.netpulseNative.postMessage(payload);
     }
+}
+
+function showToast(msg) {
+    const el = document.getElementById('toastBanner');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+        el.classList.add('hidden');
+    }, 2400);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,7 +120,35 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('filterStartDate').value = todayStr;
     document.getElementById('filterEndDate').value = todayStr;
     document.getElementById('todayDateLabel').textContent = now.toLocaleDateString('en-US', {
-        month: 'short', day: '2-digit', year: 'numeric'
+        month: 'short', day: '2-digit'
+    });
+
+    // Prevent DOM re-render from swallowing clicks during 1s polling
+    document.addEventListener('pointerdown', () => { state.isPointerDown = true; });
+    document.addEventListener('pointerup', () => { state.isPointerDown = false; });
+    document.addEventListener('pointercancel', () => { state.isPointerDown = false; });
+
+    // Delegated click handlers on dynamic tables so clicks always fire cleanly
+    bindTableDelegation('overviewAppsBody', 'data-app', openAppInspector);
+    bindTableDelegation('appTableBody', 'data-app', openAppInspector);
+    bindTableDelegation('historyTopAppsBody', 'data-app', openAppInspector);
+    bindTableDelegation('overviewWifiBody', 'data-ssid', openWifiInspector);
+    bindTableDelegation('wifiUsageTableBody', 'data-ssid', openWifiInspector);
+
+    // Keyboard shortcuts: 1-5 to switch views, Escape to close modals
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeAppInspector();
+            closeWifiInspector();
+            closeLimitsModal();
+            return;
+        }
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
+        const viewMap = { '1': 'overview', '2': 'wifi', '3': 'history', '4': 'apps', '5': 'network' };
+        if (viewMap[e.key]) {
+            switchView(viewMap[e.key]);
+        }
     });
 
     document.getElementById('globalInterfaceSelect').addEventListener('change', (e) => {
@@ -66,6 +158,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('openLimitsModalBtn').addEventListener('click', openLimitsModal);
+
+    setupChartHover('realtimeCanvas', 'realtime');
+    setupChartHover('historyCanvas', 'bar');
+    setupChartHover('appDetailCanvas', 'bar');
+    setupChartHover('wifiDetailCanvas', 'bar');
 
     loadSettings();
     fetchRealtime();
@@ -78,24 +175,65 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(fetchHistory, 10000);
     setInterval(fetchConnections, 4500);
 
-    const redrawCharts = () => {
-        if (state.realtimeData && !state.realtimePaused) {
-            drawRealtimeChart(state.realtimeData.realtime_history || []);
-        }
-        if (state.historyData) {
-            drawHistoryChart('historyCanvas', state.historyData.timeline || []);
-        }
-    };
-
-    window.addEventListener('resize', redrawCharts);
+    window.addEventListener('resize', redrawVisibleCharts);
     if (window.ResizeObserver) {
-        const ro = new ResizeObserver(() => requestAnimationFrame(redrawCharts));
-        const rtWrap = document.querySelector('.realtime-frame');
-        const hsWrap = document.querySelector('.history-frame');
-        if (rtWrap) ro.observe(rtWrap);
-        if (hsWrap) ro.observe(hsWrap);
+        const ro = new ResizeObserver(() => requestAnimationFrame(redrawVisibleCharts));
+        document.querySelectorAll('.chart-frame').forEach(frame => ro.observe(frame));
     }
 });
+
+function bindTableDelegation(tbodyId, attrName, callback) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    tbody.addEventListener('click', (e) => {
+        const row = e.target.closest(`tr[${attrName}]`);
+        if (row) {
+            const val = row.getAttribute(attrName);
+            if (val) callback(val);
+        }
+    });
+}
+
+function switchView(viewName) {
+    if (!VIEW_META[viewName]) return;
+    state.activeView = viewName;
+    hideChartTooltip();
+
+    document.querySelectorAll('#mainSidebarNav .nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === viewName);
+    });
+    document.querySelectorAll('.view-pane').forEach(pane => {
+        pane.classList.toggle('active', pane.id === `view-${viewName}`);
+    });
+
+    document.getElementById('currentViewTitle').textContent = VIEW_META[viewName].title;
+    document.getElementById('currentViewSubtitle').textContent = VIEW_META[viewName].subtitle;
+
+    if (viewName === 'network') {
+        fetchConnections();
+    }
+    requestAnimationFrame(redrawVisibleCharts);
+}
+
+function jumpToPeriod(preset) {
+    selectPreset(preset);
+    switchView('history');
+}
+
+function redrawVisibleCharts() {
+    if (state.activeView === 'overview' && state.realtimeData && !state.realtimePaused) {
+        drawRealtimeChart(state.realtimeData.realtime_history || []);
+    }
+    if (state.activeView === 'history' && state.historyData) {
+        drawHistoryChart('historyCanvas', state.historyData.timeline || []);
+    }
+    if (!document.getElementById('appDetailModal').classList.contains('hidden') && state.barChartCache['appDetailCanvas']) {
+        drawHistoryChart('appDetailCanvas', state.barChartCache['appDetailCanvas']);
+    }
+    if (!document.getElementById('wifiDetailModal').classList.contains('hidden') && state.barChartCache['wifiDetailCanvas']) {
+        drawHistoryChart('wifiDetailCanvas', state.barChartCache['wifiDetailCanvas']);
+    }
+}
 
 async function fetchRealtime() {
     try {
@@ -135,7 +273,12 @@ async function fetchConnections() {
         const res = await fetch('netpulse://app/api/connections');
         if (!res.ok) return;
         const data = await res.json();
-        renderConnectionsTable(data.connections || []);
+        state.connectionsData = data.connections || [];
+        const badge = document.getElementById('navConnBadge');
+        if (badge) badge.textContent = state.connectionsData.length;
+        if (!state.isPointerDown) {
+            renderConnectionsTable(state.connectionsData);
+        }
     } catch (err) {
         console.error('Connections error:', err);
     }
@@ -160,14 +303,9 @@ function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', state.theme);
     const lbl = document.getElementById('themeToggleLabel');
     if (lbl) {
-        lbl.textContent = state.theme === 'light' ? 'Dark Mode' : 'Light Mode';
+        lbl.textContent = state.theme === 'light' ? 'Dark' : 'Light';
     }
-    if (state.realtimeData && !state.realtimePaused) {
-        drawRealtimeChart(state.realtimeData.realtime_history || []);
-    }
-    if (state.historyData) {
-        drawHistoryChart('historyCanvas', state.historyData.timeline || []);
-    }
+    redrawVisibleCharts();
 }
 
 function toggleTheme() {
@@ -177,32 +315,76 @@ function toggleTheme() {
     postNativeAction({ action: 'set_theme', theme: next });
 }
 
+function copyPublicIP() {
+    const ip = state.latestDiagnostics && state.latestDiagnostics.public_ip;
+    if (!ip || ip === '—' || ip === 'Resolving...') return;
+    postNativeAction({ action: 'copy_text', text: ip });
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(ip).catch(() => {});
+    }
+    showToast(`Copied Public IP: ${ip}`);
+}
+
 function updateRealtimeUI(data) {
     document.getElementById('headerSpeedIn').textContent = formatSpeed(data.speed_in);
     document.getElementById('headerSpeedOut').textContent = formatSpeed(data.speed_out);
     document.getElementById('peakSpeedIn').textContent = formatSpeed(data.peak_speed_in);
     document.getElementById('peakSpeedOut').textContent = formatSpeed(data.peak_speed_out);
 
+    const wifiList = Array.isArray(data.wifi_usage) ? data.wifi_usage : [];
+    const activeWifi = wifiList.find(w => w.is_active);
+    const usedWifiCount = wifiList.filter(w => w.all_total > 0 || w.is_active).length;
+
+    const navWifiBadge = document.getElementById('navWifiBadge');
+    if (navWifiBadge) navWifiBadge.textContent = usedWifiCount;
+
+    const navAppsBadge = document.getElementById('navAppsBadge');
+    if (navAppsBadge) navAppsBadge.textContent = (data.live_apps || []).length;
+
     if (data.diagnostics) {
         const d = data.diagnostics;
-        document.getElementById('diagProfile').textContent = d.network_profile + (d.vpn_active ? ' [VPN]' : '');
-        document.getElementById('diagLocalIP').textContent = `Local IP: ${d.local_ip} (Gateway: ${d.router_ip})`;
-        const wifiUsageEl = document.getElementById('diagWiFiUsage');
-        if (wifiUsageEl && Array.isArray(data.wifi_usage)) {
-            const activeWifi = data.wifi_usage.find(w => w.is_active);
-            if (activeWifi) {
-                wifiUsageEl.textContent = `On this Wi-Fi: Today ${formatBytes(activeWifi.today_total)} · Total ${formatBytes(activeWifi.all_total)}`;
-            } else {
-                wifiUsageEl.textContent = `On this Wi-Fi: Today 0 B · Total 0 B`;
-            }
-        }
+        const profText = d.network_profile + (d.vpn_active ? ' [VPN]' : '');
+        document.getElementById('diagProfile').textContent = profText;
+        document.getElementById('sidebarActiveSSID').textContent = profText;
+        document.getElementById('diagLocalIP').textContent = `IP: ${d.local_ip} · GW: ${d.router_ip}`;
+        document.getElementById('sidebarActiveIP').textContent = `Local IP: ${d.local_ip}`;
+
+        const usageStr = activeWifi
+            ? `Today: ${formatBytes(activeWifi.today_total)} · Total: ${formatBytes(activeWifi.all_total)}`
+            : 'Today: 0 B · Total: 0 B';
+        document.getElementById('diagWiFiUsage').textContent = usageStr;
+        document.getElementById('sidebarActiveUsage').textContent = usageStr;
+
+        const netOnline = d.network_profile !== 'Disconnected';
+        document.getElementById('sidebarNetDot').className = `status-dot ${netOnline ? 'online' : ''}`;
+
         document.getElementById('diagPublicIP').textContent = d.public_ip || '—';
         document.getElementById('diagISP').textContent = d.isp_org || '—';
         document.getElementById('diagLocation').textContent = `Location: ${d.country_city || '—'}`;
-        document.getElementById('diagPingRouter').textContent = d.ping_router_ms >= 0 ? `${d.ping_router_ms.toFixed(1)} ms` : '—';
-        document.getElementById('diagPingInternet').textContent = d.ping_internet_ms >= 0 ? `${d.ping_internet_ms.toFixed(1)} ms` : '—';
-        document.getElementById('diagDbSize').textContent = `SQLite DB: ${d.db_size_kb} KB`;
 
+        const rMs = d.ping_router_ms >= 0 ? `${d.ping_router_ms.toFixed(1)} ms` : '—';
+        const iMs = d.ping_internet_ms >= 0 ? `${d.ping_internet_ms.toFixed(1)} ms` : '—';
+        document.getElementById('diagPingRouter').textContent = rMs;
+        document.getElementById('diagPingInternet').textContent = iMs;
+        document.getElementById('headerPingVal').textContent = iMs;
+
+        const pingDot = document.getElementById('headerPingDot');
+        const healthLbl = document.getElementById('diagHealthLabel');
+        if (d.ping_internet_ms < 0) {
+            pingDot.className = 'status-dot';
+            healthLbl.textContent = 'Connection quality: Measuring...';
+        } else if (d.ping_internet_ms < 35) {
+            pingDot.className = 'status-dot online';
+            healthLbl.textContent = 'Connection quality: Excellent (Low Latency)';
+        } else if (d.ping_internet_ms < 85) {
+            pingDot.className = 'status-dot online';
+            healthLbl.textContent = 'Connection quality: Good';
+        } else {
+            pingDot.className = 'status-dot warn';
+            healthLbl.textContent = 'Connection quality: Elevated Latency';
+        }
+
+        document.getElementById('diagDbSize').textContent = `SQLite DB: ${d.db_size_kb} KB`;
         if (d.db_path) {
             document.getElementById('modalDbPath').textContent = d.db_path;
         }
@@ -211,50 +393,46 @@ function updateRealtimeUI(data) {
         const stVal = document.getElementById('diagSpeedtestVal');
         if (d.speedtest_running) {
             stVal.textContent = d.speedtest_down_mbps > 0
-                ? `Testing: ${d.speedtest_down_mbps.toFixed(1)} Mbps...`
-                : 'Running benchmark...';
+                ? `${d.speedtest_down_mbps.toFixed(1)} Mbps...`
+                : 'Benchmarking...';
             stBtn.textContent = 'Testing...';
             stBtn.disabled = true;
         } else {
-            stBtn.textContent = 'Run Speedtest';
+            stBtn.textContent = 'Run Test';
             stBtn.disabled = false;
             if (d.speedtest_down_mbps > 0) {
-                stVal.textContent = `Download: ${d.speedtest_down_mbps.toFixed(1)} Mbps`;
+                stVal.textContent = `${d.speedtest_down_mbps.toFixed(1)} Mbps`;
             }
         }
 
-        // Software Update UI synchronization
+        // Version & Update UI sync
+        const verStr = `v${d.app_version || '2.4.0'}`;
+        document.getElementById('sidebarVersionLabel').textContent = `macOS Engine ${verStr}`;
         const topUpdateLabel = document.getElementById('topUpdateLabel');
         const topUpdateBtn = document.getElementById('topUpdateBtn');
+        const sidebarDot = document.getElementById('sidebarUpdateDot');
         const modalUpdateStatus = document.getElementById('modalUpdateStatus');
         const banner = document.getElementById('updateNotificationBanner');
-        const bannerTitle = document.getElementById('updateBannerTitle');
-        const bannerNotes = document.getElementById('updateBannerNotes');
 
         if (modalUpdateStatus && d.update_status) {
             modalUpdateStatus.textContent = d.update_status + (d.update_notes ? ` — ${d.update_notes}` : '');
         }
-        if (topUpdateLabel) {
-            if (d.update_installing) {
-                topUpdateLabel.textContent = 'Updating...';
-            } else if (d.update_available) {
-                topUpdateLabel.textContent = `Update Available (v${d.latest_version})`;
-                if (topUpdateBtn) topUpdateBtn.style.borderColor = '#10b981';
-            } else if (d.update_checking) {
-                topUpdateLabel.textContent = 'Checking...';
-            } else {
-                topUpdateLabel.textContent = `v${d.app_version || '2.2.0'} · Update`;
-                if (topUpdateBtn) topUpdateBtn.style.borderColor = '';
-            }
-        }
-        if (banner) {
-            if (d.update_available) {
-                banner.classList.remove('hidden');
-                if (bannerTitle) bannerTitle.textContent = `New NetPulse v${d.latest_version} is available on GitHub`;
-                if (bannerNotes) bannerNotes.textContent = d.update_notes || '';
-            } else {
-                banner.classList.add('hidden');
-            }
+        if (d.update_installing) {
+            topUpdateLabel.textContent = 'Updating...';
+        } else if (d.update_available) {
+            topUpdateLabel.textContent = `Update v${d.latest_version}`;
+            topUpdateBtn.style.borderColor = '#10b981';
+            sidebarDot.classList.remove('hidden');
+            banner.classList.remove('hidden');
+            document.getElementById('updateBannerTitle').textContent = `New NetPulse v${d.latest_version} is available on GitHub`;
+            document.getElementById('updateBannerNotes').textContent = d.update_notes || '';
+        } else if (d.update_checking) {
+            topUpdateLabel.textContent = 'Checking...';
+        } else {
+            topUpdateLabel.textContent = verStr;
+            topUpdateBtn.style.borderColor = '';
+            sidebarDot.classList.add('hidden');
+            banner.classList.add('hidden');
         }
         state.latestDiagnostics = d;
     }
@@ -294,15 +472,71 @@ function updateRealtimeUI(data) {
         }
     });
 
-    renderInterfacesList(data.interfaces || []);
-    renderWiFiUsageTable(data.wifi_usage || []);
-
-    if (state.appViewMode === 'live') {
-        renderAppTable();
+    if (!state.isPointerDown) {
+        renderOverviewGlance(data);
+        renderWiFiSummaryAndTable(wifiList);
+        renderInterfacesList(data.interfaces || []);
+        if (state.appViewMode === 'live') {
+            renderAppTable();
+        }
     }
 
-    if (!state.realtimePaused) {
+    if (state.activeView === 'overview' && !state.realtimePaused) {
         drawRealtimeChart(data.realtime_history || []);
+    }
+}
+
+function renderOverviewGlance(data) {
+    // Top 8 Active Processes
+    const appsBody = document.getElementById('overviewAppsBody');
+    const apps = (data.live_apps || []).slice(0, 8);
+    if (!apps.length) {
+        appsBody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">Collecting active processes...</td></tr>`;
+    } else {
+        appsBody.innerHTML = apps.map(a => {
+            const spd = a.speed_in + a.speed_out;
+            const rateHtml = spd > 50
+                ? `<strong style="color:var(--down-color);">${formatSpeed(spd)}</strong>`
+                : `<span class="muted-dash">Idle</span>`;
+            return `
+                <tr class="clickable-row" data-app="${escapeHtml(a.app_name)}">
+                    <td><strong>${escapeHtml(a.app_name)}</strong></td>
+                    <td class="num-col">${rateHtml}</td>
+                    <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(a.total)}</strong></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    // Top 6 Wi-Fi Networks with recorded data
+    const wifiBody = document.getElementById('overviewWifiBody');
+    const wifiAll = (data.wifi_usage || []).filter(w => w.all_total > 0 || w.is_active);
+    const grandTotal = wifiAll.reduce((acc, w) => acc + (w.all_total || 0), 0);
+    const topWifi = [...wifiAll].sort((a, b) => {
+        if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+        return b.all_total - a.all_total;
+    }).slice(0, 6);
+
+    if (!topWifi.length) {
+        wifiBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No Wi-Fi usage recorded yet</td></tr>`;
+    } else {
+        wifiBody.innerHTML = topWifi.map(w => {
+            const pct = grandTotal > 0 ? ((w.all_total / grandTotal) * 100).toFixed(1) : '0.0';
+            const activeDot = w.is_active ? `<span class="status-dot online" title="Connected"></span>` : '';
+            return `
+                <tr class="clickable-row ${w.is_active ? 'wifi-active-row' : ''}" data-ssid="${escapeHtml(w.ssid)}">
+                    <td><div class="wifi-ssid-cell">${activeDot}<strong>${escapeHtml(w.ssid)}</strong></div></td>
+                    <td class="num-col">${formatBytesOrDash(w.today_total)}</td>
+                    <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(w.all_total)}</strong></td>
+                    <td>
+                        <div class="share-bar-cell">
+                            <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
+                            <span>${pct}%</span>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
     }
 }
 
@@ -335,6 +569,181 @@ function updateLimitBars(summaries) {
     applyBar('limitWrapMonthly', 'limitFillMonthly', 'limitTextMonthly', summaries.this_month.total, monthlyGb);
 }
 
+// --- Wi-Fi Networks View, Sorting & 30-Day Inspector ---
+function setWiFiViewMode(mode) {
+    state.wifiViewMode = mode;
+    document.getElementById('wifiModeUsedBtn').classList.toggle('active', mode === 'used');
+    document.getElementById('wifiModeAllBtn').classList.toggle('active', mode === 'all');
+    if (state.realtimeData) {
+        renderWiFiSummaryAndTable(state.realtimeData.wifi_usage || []);
+    }
+}
+
+function onWifiSearchInput() {
+    const val = document.getElementById('wifiSearchInput').value;
+    document.getElementById('wifiSearchClear').classList.toggle('hidden', !val);
+    if (val && state.wifiViewMode === 'used') {
+        // Automatically search across all saved networks when typing a query
+        setWiFiViewMode('all');
+        return;
+    }
+    if (state.realtimeData) {
+        renderWiFiSummaryAndTable(state.realtimeData.wifi_usage || []);
+    }
+}
+
+function clearWifiSearch() {
+    document.getElementById('wifiSearchInput').value = '';
+    document.getElementById('wifiSearchClear').classList.add('hidden');
+    if (state.realtimeData) {
+        renderWiFiSummaryAndTable(state.realtimeData.wifi_usage || []);
+    }
+}
+
+function setWifiSort(col) {
+    if (state.wifiSortCol === col) {
+        state.wifiSortDir = state.wifiSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        state.wifiSortCol = col;
+        state.wifiSortDir = col === 'ssid' ? 'asc' : 'desc';
+    }
+    ['ssid', 'today_total', 'week_total', 'month_total', 'all_in', 'all_out', 'all_total'].forEach(c => {
+        const el = document.getElementById(`wifiSort_${c}`);
+        if (el) el.textContent = c === state.wifiSortCol ? (state.wifiSortDir === 'desc' ? '▼' : '▲') : '';
+    });
+    if (state.realtimeData) {
+        renderWiFiSummaryAndTable(state.realtimeData.wifi_usage || []);
+    }
+}
+
+function renderWiFiSummaryAndTable(wifiRows) {
+    const allRows = Array.isArray(wifiRows) ? [...wifiRows] : [];
+    const activeRow = allRows.find(r => r.is_active);
+    const withTraffic = allRows.filter(r => r.all_total > 0);
+    const topWifi = [...withTraffic].sort((a, b) => b.all_total - a.all_total)[0];
+
+    document.getElementById('wifiSumActiveName').textContent = activeRow ? activeRow.ssid : 'Not Connected';
+    document.getElementById('wifiSumActiveToday').textContent = activeRow
+        ? `Today: ${formatBytes(activeRow.today_total)} · Total: ${formatBytes(activeRow.all_total)}`
+        : 'Today: 0 B';
+
+    document.getElementById('wifiSumTopName').textContent = topWifi ? topWifi.ssid : '—';
+    document.getElementById('wifiSumTopVal').textContent = topWifi ? `All-Time: ${formatBytes(topWifi.all_total)}` : 'All-Time: 0 B';
+    document.getElementById('wifiSumCounts').textContent = `${withTraffic.length} Used · ${allRows.length} Total`;
+
+    const query = (document.getElementById('wifiSearchInput').value || '').toLowerCase().trim();
+    let rows = allRows;
+    if (state.wifiViewMode === 'used') {
+        rows = rows.filter(r => r.is_active || r.all_total > 0);
+    }
+    if (query) {
+        rows = rows.filter(r => (r.ssid || '').toLowerCase().includes(query));
+    }
+
+    const dir = state.wifiSortDir === 'desc' ? -1 : 1;
+    rows.sort((a, b) => {
+        if (!query && state.wifiSortCol === 'all_total' && state.wifiSortDir === 'desc') {
+            if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+        }
+        const col = state.wifiSortCol;
+        if (col === 'ssid') {
+            return a.ssid.localeCompare(b.ssid) * dir;
+        }
+        const diff = ((a[col] || 0) - (b[col] || 0)) * dir;
+        if (diff !== 0) return diff;
+        return 0;
+    });
+
+    document.getElementById('wifiCountLabel').textContent = rows.length;
+    const tbody = document.getElementById('wifiUsageTableBody');
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);">No matching Wi-Fi networks</td></tr>`;
+        return;
+    }
+
+    const grandTotal = allRows.reduce((acc, r) => acc + (r.all_total || 0), 0);
+
+    tbody.innerHTML = rows.map((r, idx) => {
+        const pct = grandTotal > 0 ? ((r.all_total / grandTotal) * 100).toFixed(1) : '0.0';
+        const isWired = r.ssid === 'Wired / Hotspot';
+        let statusBadge = '';
+        if (r.is_active) {
+            statusBadge = `<span class="wifi-status-badge wifi-active-badge"><span class="live-dot"></span>CONNECTED</span>`;
+        } else if (isWired) {
+            statusBadge = `<span class="wifi-status-badge wifi-wired-badge">WIRED / HOTSPOT</span>`;
+        } else if (r.all_total > 0) {
+            statusBadge = `<span class="wifi-status-badge wifi-recorded-badge">Last: ${escapeHtml(r.last_seen)}</span>`;
+        } else {
+            statusBadge = `<span class="wifi-status-badge wifi-saved-badge">${escapeHtml(r.last_seen || 'Saved on Mac')}</span>`;
+        }
+
+        const todayCell = r.today_total > 0
+            ? `<strong style="color:var(--text-primary);">${formatBytes(r.today_total)}</strong>
+               <div style="font-size:10px;color:var(--text-muted);">IN ${formatBytes(r.today_in)} · OUT ${formatBytes(r.today_out)}</div>`
+            : `<span class="muted-dash">—</span>`;
+
+        return `
+            <tr class="clickable-row ${r.is_active ? 'wifi-active-row' : ''}" data-ssid="${escapeHtml(r.ssid)}">
+                <td style="color:var(--text-muted);">${idx + 1}</td>
+                <td><div class="wifi-ssid-cell"><strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong></div></td>
+                <td>${statusBadge}</td>
+                <td class="num-col">${todayCell}</td>
+                <td class="num-col">${formatBytesOrDash(r.week_total)}</td>
+                <td class="num-col">${formatBytesOrDash(r.month_total)}</td>
+                <td class="num-col down-text">${formatBytesOrDash(r.all_in)}</td>
+                <td class="num-col up-text">${formatBytesOrDash(r.all_out)}</td>
+                <td class="num-col"><strong style="color:var(--text-primary);">${formatBytesOrDash(r.all_total)}</strong></td>
+                <td>
+                    <div class="share-bar-cell">
+                        <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
+                        <span>${pct}%</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function openWifiInspector(ssid) {
+    document.getElementById('inspectorWifiTitle').textContent = `Wi-Fi Network: ${ssid}`;
+    document.getElementById('wifiDetailModal').classList.remove('hidden');
+    try {
+        const res = await fetch(`netpulse://app/api/wifi_detail?ssid=${encodeURIComponent(ssid)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('wifiInspTotal').textContent = formatBytes(data.total);
+        document.getElementById('wifiInspIn').textContent = formatBytes(data.total_in);
+        document.getElementById('wifiInspOut').textContent = formatBytes(data.total_out);
+
+        const daily = data.daily || [];
+        state.barChartCache['wifiDetailCanvas'] = daily;
+        requestAnimationFrame(() => drawHistoryChart('wifiDetailCanvas', daily));
+
+        const activeDays = [...daily].filter(d => d.total > 0).reverse();
+        const tbody = document.getElementById('wifiInspectorBody');
+        if (!activeDays.length) {
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No bandwidth recorded on this Wi-Fi in the last 30 days</td></tr>`;
+        } else {
+            tbody.innerHTML = activeDays.map(d => `
+                <tr>
+                    <td><strong>${escapeHtml(d.label)}</strong></td>
+                    <td class="num-col down-text">${formatBytes(d.bytes_in)}</td>
+                    <td class="num-col up-text">${formatBytes(d.bytes_out)}</td>
+                    <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(d.total)}</strong></td>
+                </tr>
+            `).join('');
+        }
+    } catch (err) {
+        console.error('Wi-Fi inspector error:', err);
+    }
+}
+
+function closeWifiInspector() {
+    document.getElementById('wifiDetailModal').classList.add('hidden');
+    hideChartTooltip();
+}
+
+// --- History & Analytics View ---
 function updateHistoryUI(data) {
     if (state.currentPreset !== 'custom') {
         document.getElementById('filterStartDate').value = data.start_date;
@@ -352,12 +761,42 @@ function updateHistoryUI(data) {
         document.getElementById('rangePeakValue').textContent = 'No traffic in period';
     }
 
-    drawHistoryChart('historyCanvas', data.timeline || []);
+    state.barChartCache['historyCanvas'] = data.timeline || [];
+    if (state.activeView === 'history') {
+        drawHistoryChart('historyCanvas', data.timeline || []);
+    }
     renderTimelineTable(data.timeline || [], t.total);
+    renderHistoryTopApps(data.apps || []);
 
     if (state.appViewMode === 'history') {
         renderAppTable();
     }
+}
+
+function renderHistoryTopApps(apps) {
+    const tbody = document.getElementById('historyTopAppsBody');
+    if (!apps.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No application traffic recorded in period</td></tr>`;
+        return;
+    }
+    const grandTotal = apps.reduce((acc, a) => acc + (a.total || 0), 0);
+    tbody.innerHTML = apps.slice(0, 25).map(a => {
+        const pct = grandTotal > 0 ? ((a.total / grandTotal) * 100).toFixed(1) : '0.0';
+        return `
+            <tr class="clickable-row" data-app="${escapeHtml(a.app_name)}">
+                <td><strong>${escapeHtml(a.app_name)}</strong></td>
+                <td class="num-col down-text">${formatBytesOrDash(a.bytes_in)}</td>
+                <td class="num-col up-text">${formatBytesOrDash(a.bytes_out)}</td>
+                <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(a.total)}</strong></td>
+                <td>
+                    <div class="share-bar-cell">
+                        <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
+                        <span>${pct}%</span>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function selectPreset(preset) {
@@ -393,108 +832,24 @@ function toggleRealtimePause() {
     btn.classList.toggle('active', state.realtimePaused);
 }
 
-function setAppViewMode(mode) {
-    state.appViewMode = mode;
-    document.getElementById('appModeLiveBtn').classList.toggle('active', mode === 'live');
-    document.getElementById('appModeHistBtn').classList.toggle('active', mode === 'history');
-    document.getElementById('appColSpeed').textContent = mode === 'live' ? 'Rate' : 'Share';
-    renderAppTable();
-}
-
-function setWiFiViewMode(mode) {
-    state.wifiViewMode = mode;
-    const usedBtn = document.getElementById('wifiModeUsedBtn');
-    const allBtn = document.getElementById('wifiModeAllBtn');
-    if (usedBtn) usedBtn.classList.toggle('active', mode === 'used');
-    if (allBtn) allBtn.classList.toggle('active', mode === 'all');
-    if (state.realtimeData && state.realtimeData.wifi_usage) {
-        renderWiFiUsageTable(state.realtimeData.wifi_usage);
-    }
-}
-
-function renderWiFiUsageTable(wifiRows) {
-    const tbody = document.getElementById('wifiUsageTableBody');
-    if (!tbody) return;
-
-    const searchInput = document.getElementById('wifiSearchInput');
-    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
-
-    let rows = Array.isArray(wifiRows) ? [...wifiRows] : [];
-    if (state.wifiViewMode === 'used') {
-        rows = rows.filter(r => r.is_active || !r.is_saved_only || r.all_total > 0);
-    }
-    if (query) {
-        rows = rows.filter(r => (r.ssid || '').toLowerCase().includes(query));
-    }
-
-    const countEl = document.getElementById('wifiCountLabel');
-    if (countEl) {
-        countEl.textContent = rows.length;
-    }
-
-    if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#71717a;">No matching Wi-Fi networks found</td></tr>`;
-        return;
-    }
-
-    const grandTotal = rows.reduce((acc, r) => acc + (r.all_total || 0), 0);
-
-    tbody.innerHTML = rows.map((r, idx) => {
-        const pct = grandTotal > 0 ? ((r.all_total / grandTotal) * 100).toFixed(1) : '0.0';
-        const statusBadge = r.is_active
-            ? `<span class="wifi-status-badge wifi-active-badge"><span class="live-dot"></span>CONNECTED</span>`
-            : (r.all_total > 0
-                ? `<span class="wifi-status-badge wifi-recorded-badge">Last: ${escapeHtml(r.last_seen)}</span>`
-                : `<span class="wifi-status-badge wifi-saved-badge">${escapeHtml(r.last_seen || 'Saved Wi-Fi')}</span>`);
-
-        const rowClass = r.is_active ? 'wifi-active-row' : '';
-        return `
-            <tr class="${rowClass}">
-                <td style="color:var(--text-muted);width:36px;">${idx + 1}</td>
-                <td>
-                    <div class="wifi-ssid-cell">
-                        <strong style="color:var(--text-primary);">${escapeHtml(r.ssid)}</strong>
-                    </div>
-                </td>
-                <td>${statusBadge}</td>
-                <td class="num-col">
-                    <strong style="color:var(--text-primary);">${formatBytes(r.today_total)}</strong>
-                    <div style="font-size:10px;color:var(--text-muted);">↓ ${formatBytes(r.today_in)} · ↑ ${formatBytes(r.today_out)}</div>
-                </td>
-                <td class="num-col">${formatBytes(r.week_total)}</td>
-                <td class="num-col">${formatBytes(r.month_total)}</td>
-                <td class="num-col down-text">${formatBytes(r.all_in)}</td>
-                <td class="num-col up-text">${formatBytes(r.all_out)}</td>
-                <td class="num-col"><strong style="color:var(--text-primary);font-size:13px;">${formatBytes(r.all_total)}</strong></td>
-                <td>
-                    <div class="share-bar-cell">
-                        <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
-                        <span>${pct}%</span>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-}
-
 function renderTimelineTable(timeline, grandTotal) {
     const tbody = document.getElementById('timelineTableBody');
     document.getElementById('timelineRowCount').textContent = timeline.length;
 
-    if (!timeline.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No records for selected interval</td></tr>`;
+    const nonZero = [...timeline].reverse();
+    if (!nonZero.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No records for selected interval</td></tr>`;
         return;
     }
 
-    const sorted = [...timeline].reverse();
-    tbody.innerHTML = sorted.map(row => {
+    tbody.innerHTML = nonZero.map(row => {
         const pct = grandTotal > 0 ? ((row.total / grandTotal) * 100).toFixed(1) : '0.0';
         return `
             <tr>
-                <td>${row.label}</td>
-                <td class="num-col down-text">${formatBytes(row.bytes_in)}</td>
-                <td class="num-col up-text">${formatBytes(row.bytes_out)}</td>
-                <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(row.total)}</strong></td>
+                <td>${escapeHtml(row.label)}</td>
+                <td class="num-col down-text">${formatBytesOrDash(row.bytes_in)}</td>
+                <td class="num-col up-text">${formatBytesOrDash(row.bytes_out)}</td>
+                <td class="num-col"><strong style="color:var(--text-primary);">${formatBytesOrDash(row.total)}</strong></td>
                 <td>
                     <div class="share-bar-cell">
                         <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pct)}%"></div></div>
@@ -504,6 +859,41 @@ function renderTimelineTable(timeline, grandTotal) {
             </tr>
         `;
     }).join('');
+}
+
+// --- Applications Matrix & Sorting ---
+function setAppViewMode(mode) {
+    state.appViewMode = mode;
+    document.getElementById('appModeLiveBtn').classList.toggle('active', mode === 'live');
+    document.getElementById('appModeHistBtn').classList.toggle('active', mode === 'history');
+    document.getElementById('appColSpeed').textContent = mode === 'live' ? 'Live Rate' : 'Period Share';
+    renderAppTable();
+}
+
+function onAppSearchInput() {
+    const val = document.getElementById('appSearchInput').value;
+    document.getElementById('appSearchClear').classList.toggle('hidden', !val);
+    renderAppTable();
+}
+
+function clearAppSearch() {
+    document.getElementById('appSearchInput').value = '';
+    document.getElementById('appSearchClear').classList.add('hidden');
+    renderAppTable();
+}
+
+function setAppSort(col) {
+    if (state.appSortCol === col) {
+        state.appSortDir = state.appSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        state.appSortCol = col;
+        state.appSortDir = col === 'name' ? 'asc' : 'desc';
+    }
+    ['name', 'metric', 'bytes_in', 'bytes_out', 'total'].forEach(c => {
+        const el = document.getElementById(`appSort_${c}`);
+        if (el) el.textContent = c === state.appSortCol ? (state.appSortDir === 'desc' ? '▼' : '▲') : '';
+    });
+    renderAppTable();
 }
 
 function renderAppTable() {
@@ -514,7 +904,7 @@ function renderAppTable() {
     if (state.appViewMode === 'live' && state.realtimeData) {
         rows = (state.realtimeData.live_apps || []).map(a => ({
             name: a.app_name,
-            speed: a.speed_in + a.speed_out,
+            metric: a.speed_in + a.speed_out,
             bytes_in: a.bytes_in,
             bytes_out: a.bytes_out,
             total: a.total
@@ -523,7 +913,7 @@ function renderAppTable() {
         const grandTotal = (state.historyData.apps || []).reduce((acc, x) => acc + x.total, 0);
         rows = (state.historyData.apps || []).map(a => ({
             name: a.app_name,
-            pct: grandTotal > 0 ? (a.total / grandTotal) * 100 : 0,
+            metric: grandTotal > 0 ? (a.total / grandTotal) * 100 : 0,
             bytes_in: a.bytes_in,
             bytes_out: a.bytes_out,
             total: a.total
@@ -534,21 +924,29 @@ function renderAppTable() {
         rows = rows.filter(r => r.name.toLowerCase().includes(query));
     }
 
+    const dir = state.appSortDir === 'desc' ? -1 : 1;
+    rows.sort((a, b) => {
+        if (state.appSortCol === 'name') {
+            return a.name.localeCompare(b.name) * dir;
+        }
+        const diff = ((a[state.appSortCol] || 0) - (b[state.appSortCol] || 0)) * dir;
+        if (diff !== 0) return diff;
+        return (b.total - a.total);
+    });
+
     if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#71717a;">No matching processes</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);">No matching processes</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = rows.map(r => {
+    tbody.innerHTML = rows.map((r, idx) => {
         let secondCol = '';
         if (state.appViewMode === 'live') {
-            if (r.speed > 50) {
-                secondCol = `<span style="color:var(--text-primary);font-weight:600;">${formatSpeed(r.speed)}</span>`;
-            } else {
-                secondCol = `<span style="color:#52525b;">0 B/s</span>`;
-            }
+            secondCol = r.metric > 50
+                ? `<strong style="color:var(--down-color);">${formatSpeed(r.metric)}</strong>`
+                : `<span class="muted-dash">Idle</span>`;
         } else {
-            const pctStr = r.pct.toFixed(1);
+            const pctStr = r.metric.toFixed(1);
             secondCol = `
                 <div class="share-bar-cell" style="justify-content:flex-end;">
                     <div class="mini-bar"><div class="mini-bar-fill" style="width:${Math.min(100, pctStr)}%"></div></div>
@@ -557,26 +955,35 @@ function renderAppTable() {
             `;
         }
 
-        const safeName = escapeHtml(r.name).replace(/'/g, "\\'");
         return `
-            <tr>
-                <td><a class="app-link" onclick="openAppInspector('${safeName}')">${escapeHtml(r.name)}</a></td>
+            <tr class="clickable-row" data-app="${escapeHtml(r.name)}">
+                <td style="color:var(--text-muted);">${idx + 1}</td>
+                <td><span class="app-link">${escapeHtml(r.name)}</span></td>
                 <td class="num-col">${secondCol}</td>
-                <td class="num-col down-text">${formatBytes(r.bytes_in)}</td>
-                <td class="num-col up-text">${formatBytes(r.bytes_out)}</td>
+                <td class="num-col down-text">${formatBytesOrDash(r.bytes_in)}</td>
+                <td class="num-col up-text">${formatBytesOrDash(r.bytes_out)}</td>
                 <td class="num-col"><strong style="color:var(--text-primary);">${formatBytes(r.total)}</strong></td>
                 <td class="num-col">
-                    <button class="btn btn-ghost btn-xs" onclick="openAppInspector('${safeName}')">Inspect</button>
+                    <button class="btn btn-ghost btn-xs">Inspect</button>
                 </td>
             </tr>
         `;
     }).join('');
 }
 
+// --- Sockets, GeoIP & Hardware Interfaces ---
+function setSocketFilter(sec) {
+    state.socketFilter = sec;
+    document.querySelectorAll('[data-sec]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.sec === sec);
+    });
+    renderConnectionsTable(state.connectionsData || []);
+}
+
 function renderInterfacesList(interfaces) {
     const container = document.getElementById('interfacesList');
     if (!interfaces.length) {
-        container.innerHTML = `<div style="color:#71717a;font-size:0.8rem;">No active network interfaces</div>`;
+        container.innerHTML = `<div style="color:var(--text-muted);font-size:0.8rem;">No active network interfaces</div>`;
         return;
     }
 
@@ -612,28 +1019,63 @@ function renderSecurityBadge(status, label) {
 }
 
 function renderConnectionsTable(connections) {
+    const all = Array.isArray(connections) ? connections : [];
+    const verifiedCount = all.filter(c => c.security_status === 'verified' || c.security_status === 'local').length;
+    const warnCount = all.filter(c => c.security_status === 'warning' || c.security_status === 'suspicious').length;
+    const countries = new Set();
+    all.forEach(c => {
+        if (c.country_code && c.country_code !== 'LO' && c.country_code !== 'LAN') {
+            countries.add(c.country_code);
+        }
+    });
+
+    document.getElementById('netSumSockets').textContent = all.length;
+    document.getElementById('netSumVerified').textContent = verifiedCount;
+    const warnEl = document.getElementById('netSumWarnings');
+    warnEl.textContent = warnCount;
+    warnEl.className = `strip-val ${warnCount > 0 ? 'sec-text-warn' : ''}`;
+    document.getElementById('netSumCountries').textContent = countries.size ? Array.from(countries).slice(0, 6).join(', ') : 'Local Only';
+
+    const query = (document.getElementById('connSearchInput').value || '').toLowerCase().trim();
+    let filtered = all;
+    if (state.socketFilter === 'verified') {
+        filtered = filtered.filter(c => c.security_status === 'verified');
+    } else if (state.socketFilter === 'warning') {
+        filtered = filtered.filter(c => c.security_status === 'warning' || c.security_status === 'suspicious');
+    } else if (state.socketFilter === 'local') {
+        filtered = filtered.filter(c => c.security_status === 'local');
+    }
+    if (query) {
+        filtered = filtered.filter(c =>
+            (c.command || '').toLowerCase().includes(query) ||
+            (c.remote_addr || '').toLowerCase().includes(query) ||
+            (c.country_name || '').toLowerCase().includes(query) ||
+            (c.asn_isp || '').toLowerCase().includes(query)
+        );
+    }
+
     const tbody = document.getElementById('connectionsTableBody');
-    if (!connections.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No active connections</td></tr>`;
+    if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No matching active sockets</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = connections.map(c => {
+    tbody.innerHTML = filtered.map(c => {
         const codeTag = c.country_code ? `[${escapeHtml(c.country_code)}] ` : '';
         const country = c.country_name || 'External';
         const asn = c.asn_isp || c.geo_org || '—';
         const portTxt = c.service_port || '';
         return `
             <tr>
-                <td><strong>${escapeHtml(c.command)}</strong> <span style="color:#71717a;font-size:0.7rem;">#${c.pid}</span></td>
+                <td><strong>${escapeHtml(c.command)}</strong> <span style="color:var(--text-muted);font-size:0.68rem;">#${escapeHtml(c.pid)}</span></td>
                 <td>
                     <span class="proto-badge">${escapeHtml(c.proto)}</span>
-                    <div style="font-size:0.68rem;color:#71717a;margin-top:2px;">${escapeHtml(portTxt)}</div>
+                    <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(portTxt)}</div>
                 </td>
-                <td style="font-size:0.72rem;word-break:break-all;font-family:'JetBrains Mono',monospace;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
-                <td style="font-size:0.73rem;">
-                    <div><span style="color:var(--text-muted);font-family:'JetBrains Mono',monospace;font-size:0.68rem;">${codeTag}</span><strong>${escapeHtml(country)}</strong></div>
-                    <div style="font-size:0.69rem;color:#a1a1aa;">${escapeHtml(asn)}</div>
+                <td style="font-size:0.71rem;word-break:break-all;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                <td style="font-size:0.72rem;">
+                    <div><span style="color:var(--text-muted);font-size:0.67rem;">${codeTag}</span><strong style="color:var(--text-primary);">${escapeHtml(country)}</strong></div>
+                    <div style="font-size:0.68rem;color:var(--text-secondary);">${escapeHtml(asn)}</div>
                 </td>
                 <td>${renderSecurityBadge(c.security_status, c.security_label)}</td>
             </tr>
@@ -641,10 +1083,7 @@ function renderConnectionsTable(connections) {
     }).join('');
 }
 
-let inspectorRefreshTimer = null;
-let currentInspectedApp = null;
-
-// --- App Inspector Modal ---
+// --- Process Inspector Modal ---
 async function openAppInspector(appName) {
     currentInspectedApp = appName;
     document.getElementById('inspectorAppTitle').textContent = `Process Profile: ${appName}`;
@@ -653,6 +1092,7 @@ async function openAppInspector(appName) {
     const killBtn = document.getElementById('inspectorKillBtn');
     killBtn.onclick = () => {
         postNativeAction({ action: 'kill_app', app_name: appName });
+        showToast(`Sent SIGTERM to ${appName}`);
         closeAppInspector();
     };
 
@@ -669,19 +1109,14 @@ async function loadAppInspectorData(appName, redrawChart) {
         if (!res.ok) return;
         const data = await res.json();
         if (redrawChart) {
+            state.barChartCache['appDetailCanvas'] = data.hourly || [];
             drawHistoryChart('appDetailCanvas', data.hourly || []);
         }
 
         const tbody = document.getElementById('inspectorConnBody');
         const conns = data.connections || [];
 
-        // Populate GeoIP & Security Summary Strip
-        const socketCountEl = document.getElementById('inspSocketCount');
-        const countryListEl = document.getElementById('inspCountryList');
-        const orgCountEl = document.getElementById('inspOrgCount');
-        const secStatusEl = document.getElementById('inspSecurityStatus');
-
-        if (socketCountEl) socketCountEl.textContent = `${conns.length} Active`;
+        document.getElementById('inspSocketCount').textContent = `${conns.length} Active`;
 
         const countrySet = new Set();
         const orgSet = new Set();
@@ -690,47 +1125,39 @@ async function loadAppInspectorData(appName, redrawChart) {
 
         conns.forEach(c => {
             const cc = c.country_code || 'EXT';
-            if (cc !== 'LO' && cc !== 'LAN') {
-                countrySet.add(cc);
-            } else {
-                countrySet.add('Local');
-            }
+            countrySet.add((cc !== 'LO' && cc !== 'LAN') ? cc : 'Local');
             if (c.asn_isp && c.asn_isp !== '—') orgSet.add(c.asn_isp);
             if (c.security_status === 'suspicious') suspiciousCount++;
             else if (c.security_status === 'warning') warningCount++;
         });
 
-        if (countryListEl) {
-            countryListEl.textContent = countrySet.size ? Array.from(countrySet).slice(0, 5).join(' · ') : '—';
-        }
-        if (orgCountEl) {
-            orgCountEl.textContent = `${orgSet.size} Provider${orgSet.size === 1 ? '' : 's'}`;
-        }
-        if (secStatusEl) {
-            if (suspiciousCount > 0) {
-                secStatusEl.textContent = `${suspiciousCount} Suspicious Endpoint${suspiciousCount > 1 ? 's' : ''}`;
-                secStatusEl.className = 'sec-text-danger';
-            } else if (warningCount > 0) {
-                secStatusEl.textContent = `${warningCount} Unencrypted / Custom Port`;
-                secStatusEl.className = 'sec-text-warn';
-            } else {
-                secStatusEl.textContent = conns.length ? 'All Sockets Verified (TLS/Local)' : 'Idle / No External Sockets';
-                secStatusEl.className = 'sec-text-ok';
-            }
+        document.getElementById('inspCountryList').textContent = countrySet.size ? Array.from(countrySet).slice(0, 5).join(' · ') : '—';
+        document.getElementById('inspOrgCount').textContent = `${orgSet.size} Provider${orgSet.size === 1 ? '' : 's'}`;
+
+        const secStatusEl = document.getElementById('inspSecurityStatus');
+        if (suspiciousCount > 0) {
+            secStatusEl.textContent = `${suspiciousCount} Suspicious Endpoint${suspiciousCount > 1 ? 's' : ''}`;
+            secStatusEl.className = 'sec-text-danger';
+        } else if (warningCount > 0) {
+            secStatusEl.textContent = `${warningCount} Unencrypted / Custom Port`;
+            secStatusEl.className = 'sec-text-warn';
+        } else {
+            secStatusEl.textContent = conns.length ? 'All Sockets Verified (TLS/Local)' : 'Idle / No External Sockets';
+            secStatusEl.className = 'sec-text-ok';
         }
 
         if (!conns.length) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#71717a;">No open sockets for this process right now</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No open sockets for this process right now</td></tr>`;
         } else {
             tbody.innerHTML = conns.map(c => `
                 <tr>
                     <td>
                         <span class="proto-badge">${escapeHtml(c.proto)}</span>
-                        <div style="font-size:0.68rem;color:#71717a;margin-top:2px;">${escapeHtml(c.service_port || '')}</div>
+                        <div style="font-size:0.66rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(c.service_port || '')}</div>
                     </td>
-                    <td style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
+                    <td style="font-size:0.73rem;">${escapeHtml(c.remote_addr !== '—' ? c.remote_addr : c.local_addr)}</td>
                     <td><strong>${escapeHtml(c.country_name || 'External')}</strong></td>
-                    <td style="color:#a1a1aa;font-size:0.74rem;">${escapeHtml(c.asn_isp || c.geo_org)}</td>
+                    <td style="color:var(--text-secondary);font-size:0.73rem;">${escapeHtml(c.asn_isp || c.geo_org)}</td>
                     <td>
                         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                             ${renderSecurityBadge(c.security_status, c.security_label)}
@@ -752,18 +1179,20 @@ function closeAppInspector() {
         inspectorRefreshTimer = null;
     }
     document.getElementById('appDetailModal').classList.add('hidden');
+    hideChartTooltip();
 }
 
 function triggerSpeedtest() {
     const stBtn = document.getElementById('runSpeedtestBtn');
     const stVal = document.getElementById('diagSpeedtestVal');
-    if (stVal) stVal.textContent = 'Running benchmark...';
+    if (stVal) stVal.textContent = 'Benchmarking...';
     if (stBtn) {
         stBtn.textContent = 'Testing...';
         stBtn.disabled = true;
     }
     postNativeAction({ action: 'run_speedtest' });
     fetch('netpulse://app/api/speedtest').catch(() => {});
+    showToast('Started Multi-CDN Bandwidth Speedtest');
     setTimeout(fetchRealtime, 500);
 }
 
@@ -771,7 +1200,87 @@ function revealDatabase() {
     postNativeAction({ action: 'reveal_db' });
 }
 
-// --- Charts ---
+// --- Interactive Canvas Charts & Crosshair Tooltips ---
+function setupChartHover(canvasId, type) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const padLeft = 72;
+        const padRight = type === 'realtime' ? 24 : 20;
+        const plotW = rect.width - padLeft - padRight;
+        if (mx < padLeft || mx > rect.width - padRight || plotW <= 0) {
+            hideChartTooltip();
+            return;
+        }
+
+        if (type === 'realtime') {
+            const history = (state.realtimeData && state.realtimeData.realtime_history) ? state.realtimeData.realtime_history.slice(-120) : [];
+            if (history.length < 2) return;
+            const ratio = Math.max(0, Math.min(1, (mx - padLeft) / plotW));
+            const idx = Math.round(ratio * 119) - (120 - history.length);
+            if (idx >= 0 && idx < history.length) {
+                state.hoverRealtimeIdx = idx;
+                const pt = history[idx];
+                showChartTooltip(e.clientX, e.clientY, `
+                    <div class="tt-head">${escapeHtml(pt.time_str)}</div>
+                    <div class="tt-row"><span class="down-text">Download</span><strong>${formatSpeed(pt.speed_in)}</strong></div>
+                    <div class="tt-row"><span class="up-text">Upload</span><strong>${formatSpeed(pt.speed_out)}</strong></div>
+                `);
+                drawRealtimeChart(history);
+            }
+        } else {
+            const timeline = state.barChartCache[canvasId] || [];
+            if (!timeline.length) return;
+            const slotW = plotW / timeline.length;
+            const idx = Math.min(timeline.length - 1, Math.max(0, Math.floor((mx - padLeft) / slotW)));
+            state.hoverBarCanvas = canvasId;
+            state.hoverBarIdx = idx;
+            const item = timeline[idx];
+            showChartTooltip(e.clientX, e.clientY, `
+                <div class="tt-head">${escapeHtml(item.label)}</div>
+                <div class="tt-row"><span class="down-text">Download</span><strong>${formatBytes(item.bytes_in)}</strong></div>
+                <div class="tt-row"><span class="up-text">Upload</span><strong>${formatBytes(item.bytes_out)}</strong></div>
+                <div class="tt-row"><span>Total</span><strong>${formatBytes(item.total)}</strong></div>
+            `);
+            drawHistoryChart(canvasId, timeline);
+        }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        state.hoverRealtimeIdx = -1;
+        state.hoverBarCanvas = null;
+        state.hoverBarIdx = -1;
+        hideChartTooltip();
+        if (type === 'realtime' && state.realtimeData) {
+            drawRealtimeChart(state.realtimeData.realtime_history || []);
+        } else if (state.barChartCache[canvasId]) {
+            drawHistoryChart(canvasId, state.barChartCache[canvasId]);
+        }
+    });
+}
+
+function showChartTooltip(cx, cy, html) {
+    const tt = document.getElementById('chartTooltip');
+    tt.innerHTML = html;
+    tt.classList.remove('hidden');
+    const w = tt.offsetWidth || 170;
+    const h = tt.offsetHeight || 80;
+    let left = cx + 14;
+    let top = cy - h - 10;
+    if (left + w > window.innerWidth - 12) left = cx - w - 14;
+    if (top < 12) top = cy + 14;
+    tt.style.left = `${left}px`;
+    tt.style.top = `${top}px`;
+}
+
+function hideChartTooltip() {
+    const tt = document.getElementById('chartTooltip');
+    if (tt) tt.classList.add('hidden');
+}
+
 function drawRealtimeChart(history) {
     const canvas = document.getElementById('realtimeCanvas');
     if (!canvas) return;
@@ -786,7 +1295,7 @@ function drawRealtimeChart(history) {
 
     const w = rect.width;
     const h = rect.height;
-    const pad = { top: 14, right: 28, bottom: 26, left: 72 };
+    const pad = { top: 12, right: 24, bottom: 24, left: 72 };
     const plotW = w - pad.left - pad.right;
     const plotH = h - pad.top - pad.bottom;
 
@@ -835,7 +1344,7 @@ function drawRealtimeChart(history) {
             else ctx.lineTo(x, y);
         });
         ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 1.75;
+        ctx.lineWidth = 1.85;
         ctx.stroke();
 
         const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
@@ -848,8 +1357,33 @@ function drawRealtimeChart(history) {
         ctx.fill();
     };
 
-    drawSeries('speed_in', '#10b981', 'rgba(16, 185, 129, 0.20)');
+    drawSeries('speed_in', '#10b981', 'rgba(16, 185, 129, 0.22)');
     drawSeries('speed_out', '#3b82f6', 'rgba(59, 130, 246, 0.18)');
+
+    // Hover Crosshair
+    if (state.hoverRealtimeIdx >= 0 && state.hoverRealtimeIdx < points.length) {
+        const hx = getX(state.hoverRealtimeIdx);
+        const pt = points[state.hoverRealtimeIdx];
+        ctx.save();
+        ctx.strokeStyle = isLight ? 'rgba(15, 23, 42, 0.3)' : 'rgba(255, 255, 255, 0.25)';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(hx, pad.top);
+        ctx.lineTo(hx, pad.top + plotH);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#10b981';
+        ctx.beginPath();
+        ctx.arc(hx, getY(pt.speed_in), 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(hx, getY(pt.speed_out), 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
 
     ctx.fillStyle = isLight ? '#475569' : '#71717a';
     ctx.font = '10px "JetBrains Mono", monospace';
@@ -858,17 +1392,18 @@ function drawRealtimeChart(history) {
     const minLabelGap = 85;
     for (let i = 0; i < points.length; i++) {
         const isLast = (i === points.length - 1);
-        const isTick = (i % 20 === 0) || isLast;
-        if (!isTick) continue;
-        const x = getX(i);
-        if (x - lastDrawnX >= minLabelGap) {
-            ctx.fillText(points[i].time_str, x, h - 6);
-            lastDrawnX = x;
+        if ((i % 20 === 0) || isLast) {
+            const x = getX(i);
+            if (x - lastDrawnX >= minLabelGap) {
+                ctx.fillText(points[i].time_str, x, h - 6);
+                lastDrawnX = x;
+            }
         }
     }
 }
 
 function drawHistoryChart(canvasId, timeline) {
+    state.barChartCache[canvasId] = timeline;
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -882,7 +1417,7 @@ function drawHistoryChart(canvasId, timeline) {
 
     const w = rect.width;
     const h = rect.height;
-    const pad = { top: 16, right: 20, bottom: 28, left: 72 };
+    const pad = { top: 14, right: 20, bottom: 26, left: 72 };
     const plotW = w - pad.left - pad.right;
     const plotH = h - pad.top - pad.bottom;
 
@@ -920,13 +1455,18 @@ function drawHistoryChart(canvasId, timeline) {
 
     const n = timeline.length;
     const slotW = plotW / n;
-    const barW = Math.max(4, Math.min(34, slotW * 0.56));
+    const barW = Math.max(4, Math.min(32, slotW * 0.58));
     let lastLabelX = -999;
-    const minHistGap = n === 24 ? 36 : 54;
+    const minHistGap = n === 24 ? 36 : 52;
 
     timeline.forEach((item, idx) => {
         const centerX = pad.left + slotW * idx + slotW / 2;
         const x = centerX - barW / 2;
+
+        if (state.hoverBarCanvas === canvasId && state.hoverBarIdx === idx) {
+            ctx.fillStyle = isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)';
+            ctx.fillRect(pad.left + slotW * idx, pad.top, slotW, plotH);
+        }
 
         if (item.total > 0) {
             const inH = (item.bytes_in / maxVal) * plotH;
@@ -956,7 +1496,7 @@ function drawHistoryChart(canvasId, timeline) {
             } else if (shortLabel.length === 10) {
                 shortLabel = shortLabel.slice(5);
             }
-            ctx.fillText(shortLabel, centerX, h - 8);
+            ctx.fillText(shortLabel, centerX, h - 7);
             lastLabelX = centerX;
         }
     });
@@ -1005,6 +1545,7 @@ function saveSettings() {
     });
     fetchRealtime();
     closeLimitsModal();
+    showToast('Saved Quotas & System Configuration');
 }
 
 function checkUpdates() {
@@ -1032,12 +1573,4 @@ function handleTopUpdateBtn() {
         checkUpdates();
         openLimitsModal();
     }
-}
-
-function escapeHtml(str) {
-    return String(str || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }

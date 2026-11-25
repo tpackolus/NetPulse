@@ -1,7 +1,7 @@
 {
-  "version": "2.3.4",
-  "build": 234,
-  "release_date": "2026-11-13",
+  "version": "2.4.0",
+  "build": 240,
+  "release_date": "2026-11-25",
   "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
-  "notes": "v2.3.4 — Fixed Pipe file descriptor leak in long-running background threads so active Wi-Fi SSID (e.g. Predam_bicykel), all 128 saved Wi-Fi networks, and live processes never drop to Ethernet / Offline."
+  "notes": "v2.4.0 — Complete macOS Sidebar UI Redesign: 5 dedicated views (Overview, Wi-Fi Networks, History, Applications, Sockets & Adapters), interactive chart hover tooltips, sortable tables, and 30-day per-Wi-Fi SSID inspector."
 }

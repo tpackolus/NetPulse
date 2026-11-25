@@ -148,6 +148,31 @@ final class TelemetryEngine {
         return nil
     }
 
+    private func getAnyExternalInterfaceIPv4() -> (iface: String, ip: String)? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr: UnsafeMutablePointer<ifaddrs>? = firstAddr
+        while let current = ptr {
+            let interface = current.pointee
+            let name = String(cString: interface.ifa_name)
+            if name != "lo0" && !name.hasPrefix("awdl") && !name.hasPrefix("llw") && !name.hasPrefix("utun"),
+               let addr = interface.ifa_addr,
+               addr.pointee.sa_family == UInt8(AF_INET) {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(addr, socklen_t(addr.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    let ip = String(cString: hostname)
+                    if !ip.isEmpty && !ip.hasPrefix("169.254.") && !ip.hasPrefix("127.") {
+                        return (name, ip)
+                    }
+                }
+            }
+            ptr = interface.ifa_next
+        }
+        return nil
+    }
+
     private func discoverHardwarePorts() {
         let out = runCommand("/usr/sbin/networksetup", ["-listallhardwareports"])
         var currentPort: String?
@@ -468,8 +493,11 @@ final class TelemetryEngine {
             let wifiActive = (ip != "—" && !ip.isEmpty) || runCommand("/usr/sbin/ipconfig", ["getsummary", "en0"]).contains("LinkStatusActive : TRUE")
             if wifiActive, let currentSSID = prefList.first, !currentSSID.isEmpty {
                 profile = currentSSID
-            } else if !wifiActive {
-                profile = "Offline"
+            } else if let ext = getAnyExternalInterfaceIPv4() {
+                ip = ext.ip
+                profile = "Wired / Hotspot"
+            } else {
+                profile = "Disconnected"
             }
         }
 
@@ -1033,8 +1061,8 @@ final class TelemetryEngine {
     }
 
     // MARK: - GitHub OTA Auto-Update Checker & 1-Click Self-Updater
-    let currentAppVersion = "2.3.4"
-    let currentAppBuild = 234
+    let currentAppVersion = "2.4.0"
+    let currentAppBuild = 240
 
     private func compareVersions(_ v1: String, _ v2: String) -> Int {
         let p1 = v1.split(separator: ".").compactMap { Int($0) }

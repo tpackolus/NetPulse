@@ -10,445 +10,672 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <!-- Top Header -->
-    <header class="topbar">
-        <div class="topbar-inner">
-            <div class="brand-group">
+    <div class="app-shell">
+        <!-- Left macOS Navigation Rail -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
                 <div class="brand-mark">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                     </svg>
                 </div>
                 <div class="brand-meta">
                     <div class="brand-row">
                         <span class="brand-name">NetPulse</span>
-                        <span class="brand-tag">Native macOS Engine</span>
                         <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
                     </div>
-                    <p class="brand-sub" id="statusSubtitle">Real-time network interface &amp; process bandwidth telemetry</p>
+                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.4.0</span>
                 </div>
             </div>
 
-            <div class="telemetry-strip">
-                <div class="telemetry-metric">
-                    <div class="metric-label">
-                        <span class="dot-indicator down-bg"></span>
-                        <span>INGRESS / DOWNLOAD</span>
-                    </div>
-                    <div class="metric-val" id="headerSpeedIn">0 B/s</div>
+            <div class="sidebar-section-label">TELEMETRY VIEWS</div>
+            <nav class="sidebar-nav" id="mainSidebarNav">
+                <button class="nav-item active" data-view="overview" onclick="switchView('overview')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
+                        </svg>
+                        <span>Overview</span>
+                    </span>
+                    <kbd class="nav-kbd">1</kbd>
+                </button>
+
+                <button class="nav-item" data-view="wifi" onclick="switchView('wifi')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+                        </svg>
+                        <span>Wi-Fi Networks</span>
+                    </span>
+                    <span class="nav-badge" id="navWifiBadge">0</span>
+                </button>
+
+                <button class="nav-item" data-view="history" onclick="switchView('history')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+                        </svg>
+                        <span>History &amp; Analytics</span>
+                    </span>
+                    <kbd class="nav-kbd">3</kbd>
+                </button>
+
+                <button class="nav-item" data-view="apps" onclick="switchView('apps')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        <span>Applications</span>
+                    </span>
+                    <span class="nav-badge" id="navAppsBadge">0</span>
+                </button>
+
+                <button class="nav-item" data-view="network" onclick="switchView('network')">
+                    <span class="nav-item-left">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        <span>Sockets &amp; Adapters</span>
+                    </span>
+                    <span class="nav-badge" id="navConnBadge">0</span>
+                </button>
+            </nav>
+
+            <!-- Active Network Quick Summary Box in Sidebar -->
+            <div class="sidebar-net-card" onclick="switchView('wifi')" title="Click to inspect Wi-Fi data usage">
+                <div class="sidebar-net-top">
+                    <span class="sidebar-net-label">ACTIVE NETWORK</span>
+                    <span class="status-dot online" id="sidebarNetDot"></span>
                 </div>
-                <div class="telemetry-divider"></div>
-                <div class="telemetry-metric">
-                    <div class="metric-label">
-                        <span class="dot-indicator up-bg"></span>
-                        <span>EGRESS / UPLOAD</span>
-                    </div>
-                    <div class="metric-val" id="headerSpeedOut">0 B/s</div>
-                </div>
+                <div class="sidebar-net-ssid" id="sidebarActiveSSID">Detecting...</div>
+                <div class="sidebar-net-sub" id="sidebarActiveIP">Local IP: —</div>
+                <div class="sidebar-net-usage" id="sidebarActiveUsage">Today: 0 B · Total: 0 B</div>
             </div>
 
-            <div class="topbar-actions">
-                <div class="select-wrapper">
-                    <span class="select-prefix">Interface</span>
-                    <select id="globalInterfaceSelect" class="select-control">
+            <!-- Sidebar Footer Controls -->
+            <div class="sidebar-footer">
+                <div class="sidebar-field">
+                    <label for="globalInterfaceSelect">Monitored Adapter</label>
+                    <select id="globalInterfaceSelect" class="select-control full-width">
                         <option value="all">All External Adapters</option>
                     </select>
                 </div>
-                <button class="btn btn-ghost" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle Light / Dark Mode">
-                    <span id="themeToggleLabel">Light Mode</span>
-                </button>
-                <button class="btn btn-ghost" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click Self-Update">
-                    <span id="topUpdateLabel">v2.3.4 · Update</span>
-                </button>
-                <button class="btn btn-ghost" onclick="revealDatabase()" title="Reveal SQLite Database in Finder">
-                    <span>Database</span>
-                </button>
-                <button class="btn btn-secondary" id="openLimitsModalBtn">
-                    <span>Quotas &amp; System</span>
-                </button>
-            </div>
-        </div>
-    </header>
 
-    <!-- Main Content -->
-    <main class="workspace">
-        <!-- Auto-Update Notification Banner (shown automatically when a newer version is on GitHub) -->
-        <div id="updateNotificationBanner" class="alert-item alert-update hidden">
-            <div>
-                <strong id="updateBannerTitle">New NetPulse Update Available</strong>
-                <span id="updateBannerNotes" style="margin-left:10px;opacity:0.85;"></span>
-            </div>
-            <button class="btn btn-primary btn-xs" id="updateBannerBtn" onclick="installUpdate()">Install Update Now</button>
-        </div>
-
-        <!-- Network Diagnostics, Ping & Storage Bar -->
-        <section class="diag-strip">
-            <div class="diag-item">
-                <span class="diag-label">ACTIVE WI-FI / PROFILE</span>
-                <span class="diag-value" id="diagProfile">Wi-Fi (en0)</span>
-                <span class="diag-sub" id="diagLocalIP">Local IP: —</span>
-                <span class="diag-sub wifi-usage-inline" id="diagWiFiUsage">On this Wi-Fi: Today 0 B · Total 0 B</span>
-            </div>
-            <div class="diag-item">
-                <span class="diag-label">PUBLIC IP &amp; PROVIDER</span>
-                <span class="diag-value" id="diagPublicIP">Resolving...</span>
-                <span class="diag-sub" id="diagISP">—</span>
-            </div>
-            <div class="diag-item">
-                <span class="diag-label">NETWORK LATENCY (PING)</span>
-                <div class="ping-row">
-                    <span>Gateway: <strong id="diagPingRouter">—</strong></span>
-                    <span class="ping-sep">|</span>
-                    <span>Internet (1.1.1.1): <strong id="diagPingInternet">—</strong></span>
-                </div>
-                <span class="diag-sub" id="diagLocation">Location: —</span>
-            </div>
-            <div class="diag-item diag-item-action">
-                <div>
-                    <span class="diag-label">BANDWIDTH TEST &amp; STORAGE</span>
-                    <span class="diag-value" id="diagSpeedtestVal">Line Benchmark</span>
-                    <span class="diag-sub" id="diagDbSize">SQLite DB: — KB</span>
-                </div>
-                <button class="btn btn-ghost btn-xs" id="runSpeedtestBtn" onclick="triggerSpeedtest()">Run Speedtest</button>
-            </div>
-        </section>
-
-        <!-- KPI Summary Grid -->
-        <section class="kpi-grid">
-            <div class="kpi-card active-period" data-preset="today" onclick="selectPreset('today')">
-                <div class="kpi-card-top">
-                    <span class="kpi-period">TODAY</span>
-                    <span class="kpi-meta" id="todayDateLabel">—</span>
-                </div>
-                <div class="kpi-primary" id="sumTodayTotal">0.00 MB</div>
-                <div class="kpi-breakdown">
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
-                        <span class="flow-val" id="sumTodayIn">0 MB</span>
-                    </div>
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
-                        <span class="flow-val" id="sumTodayOut">0 MB</span>
-                    </div>
-                </div>
-                <div class="quota-progress hidden" id="limitWrapDaily">
-                    <div class="quota-track"><div class="quota-fill" id="limitFillDaily"></div></div>
-                    <span class="quota-label" id="limitTextDaily"></span>
-                </div>
-            </div>
-
-            <div class="kpi-card" data-preset="this_week" onclick="selectPreset('this_week')">
-                <div class="kpi-card-top">
-                    <span class="kpi-period">THIS WEEK</span>
-                    <span class="kpi-meta">7d: <strong id="sum7dTotal">0 MB</strong></span>
-                </div>
-                <div class="kpi-primary" id="sumWeekTotal">0.00 MB</div>
-                <div class="kpi-breakdown">
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
-                        <span class="flow-val" id="sumWeekIn">0 MB</span>
-                    </div>
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
-                        <span class="flow-val" id="sumWeekOut">0 MB</span>
-                    </div>
-                </div>
-                <div class="quota-progress hidden" id="limitWrapWeekly">
-                    <div class="quota-track"><div class="quota-fill" id="limitFillWeekly"></div></div>
-                    <span class="quota-label" id="limitTextWeekly"></span>
-                </div>
-            </div>
-
-            <div class="kpi-card" data-preset="this_month" onclick="selectPreset('this_month')">
-                <div class="kpi-card-top">
-                    <span class="kpi-period">THIS MONTH</span>
-                    <span class="kpi-meta">30d: <strong id="sum30dTotal">0 MB</strong></span>
-                </div>
-                <div class="kpi-primary" id="sumMonthTotal">0.00 GB</div>
-                <div class="kpi-breakdown">
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
-                        <span class="flow-val" id="sumMonthIn">0 MB</span>
-                    </div>
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
-                        <span class="flow-val" id="sumMonthOut">0 MB</span>
-                    </div>
-                </div>
-                <div class="quota-progress hidden" id="limitWrapMonthly">
-                    <div class="quota-track"><div class="quota-fill" id="limitFillMonthly"></div></div>
-                    <span class="quota-label" id="limitTextMonthly"></span>
-                </div>
-            </div>
-
-            <div class="kpi-card" data-preset="this_year" onclick="selectPreset('this_year')">
-                <div class="kpi-card-top">
-                    <span class="kpi-period">THIS YEAR / TOTAL</span>
-                    <span class="kpi-meta">Yesterday: <strong id="sumYesterdayTotal">0 MB</strong></span>
-                </div>
-                <div class="kpi-primary" id="sumYearTotal">0.00 GB</div>
-                <div class="kpi-breakdown">
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm down-bg"></i>IN</span>
-                        <span class="flow-val" id="sumYearIn">0 MB</span>
-                    </div>
-                    <div class="kpi-flow">
-                        <span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span>
-                        <span class="flow-val" id="sumYearOut">0 MB</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Real-Time Telemetry Stream -->
-        <section class="surface-panel">
-            <div class="panel-head">
-                <div class="panel-titles">
-                    <h2 class="section-title">Real-Time Throughput Stream</h2>
-                    <p class="section-subtitle">Continuous 120-second rolling window with 1-second resolution</p>
-                </div>
-                <div class="panel-controls">
-                    <div class="metric-chip">
-                        <span class="chip-label">Peak IN</span>
-                        <span class="chip-val down-text" id="peakSpeedIn">0 B/s</span>
-                    </div>
-                    <div class="metric-chip">
-                        <span class="chip-label">Peak OUT</span>
-                        <span class="chip-val up-text" id="peakSpeedOut">0 B/s</span>
-                    </div>
-                    <button class="btn btn-ghost" id="pauseRealtimeBtn" onclick="toggleRealtimePause()">Pause</button>
-                </div>
-            </div>
-            <div class="chart-frame realtime-frame">
-                <canvas id="realtimeCanvas"></canvas>
-            </div>
-        </section>
-
-        <!-- Historical Analytics & Custom Date Filter -->
-        <section class="surface-panel" id="historySection">
-            <div class="panel-head">
-                <div class="panel-titles">
-                    <h2 class="section-title">Historical Bandwidth &amp; Custom Date Analytics</h2>
-                    <p class="section-subtitle">Aggregate transferred data by hour (24h), day, month, or custom date interval</p>
-                </div>
-                <div class="panel-controls">
-                    <button class="btn btn-ghost" onclick="exportData('csv')">
-                        <span>Export CSV</span>
+                <div class="sidebar-utility-row">
+                    <button class="btn btn-ghost btn-icon-text" id="themeToggleBtn" onclick="toggleTheme()" title="Switch Dark / Light Theme">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                        <span id="themeToggleLabel">Light</span>
                     </button>
-                    <button class="btn btn-ghost" onclick="exportData('json')">
-                        <span>Export JSON</span>
+                    <button class="btn btn-ghost btn-icon-text" onclick="revealDatabase()" title="Reveal SQLite Database in Finder">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                        <span>DB</span>
                     </button>
                 </div>
+
+                <button class="btn btn-secondary full-width sidebar-settings-btn" id="openLimitsModalBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span>Quotas &amp; Updates</span>
+                    <span class="update-dot hidden" id="sidebarUpdateDot"></span>
+                </button>
             </div>
+        </aside>
 
-            <!-- Filter Toolbar -->
-            <div class="filter-toolbar">
-                <div class="segmented-control" id="presetTabs">
-                    <button class="seg-btn active" data-preset="today" onclick="selectPreset('today')">Today</button>
-                    <button class="seg-btn" data-preset="yesterday" onclick="selectPreset('yesterday')">Yesterday</button>
-                    <button class="seg-btn" data-preset="this_week" onclick="selectPreset('this_week')">This Week</button>
-                    <button class="seg-btn" data-preset="last_7_days" onclick="selectPreset('last_7_days')">Last 7 Days</button>
-                    <button class="seg-btn" data-preset="this_month" onclick="selectPreset('this_month')">This Month</button>
-                    <button class="seg-btn" data-preset="last_30_days" onclick="selectPreset('last_30_days')">Last 30 Days</button>
-                    <button class="seg-btn" data-preset="this_year" onclick="selectPreset('this_year')">This Year</button>
-                    <button class="seg-btn" data-preset="custom" onclick="selectPreset('custom')">Custom Range</button>
+        <!-- Right Main Content Column -->
+        <div class="main-column">
+            <!-- Compact Single-Row Top Header (Never wraps) -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 class="topbar-title" id="currentViewTitle">Live Telemetry Overview</h1>
+                    <span class="topbar-sep">/</span>
+                    <span class="topbar-subtitle" id="currentViewSubtitle">Real-time throughput, active Wi-Fi &amp; top processes</span>
                 </div>
 
-                <div class="custom-range-bar">
-                    <div class="field-inline">
-                        <label for="filterStartDate">From</label>
-                        <input type="date" id="filterStartDate" class="input-control">
-                    </div>
-                    <div class="field-inline">
-                        <label for="filterEndDate">To</label>
-                        <input type="date" id="filterEndDate" class="input-control">
-                    </div>
-                    <div class="field-inline">
-                        <label for="filterGroupBy">Granularity</label>
-                        <select id="filterGroupBy" class="select-control">
-                            <option value="auto">Automatic</option>
-                            <option value="hour">Hourly (00:00 – 23:00)</option>
-                            <option value="day">Daily</option>
-                            <option value="month">Monthly</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-primary" onclick="applyCustomFilter()">Apply Filter</button>
-                </div>
-            </div>
-
-            <!-- Filtered Period Summary Strip -->
-            <div class="summary-strip">
-                <div class="strip-cell">
-                    <span class="strip-label">TOTAL VOLUME IN PERIOD</span>
-                    <span class="strip-val" id="rangeTotalValue">0.00 GB</span>
-                </div>
-                <div class="strip-cell">
-                    <span class="strip-label">DOWNLOADED (INGRESS)</span>
-                    <span class="strip-val down-text" id="rangeInValue">0.00 GB</span>
-                </div>
-                <div class="strip-cell">
-                    <span class="strip-label">UPLOADED (EGRESS)</span>
-                    <span class="strip-val up-text" id="rangeOutValue">0.00 GB</span>
-                </div>
-                <div class="strip-cell">
-                    <span class="strip-label">PEAK INTERVAL</span>
-                    <span class="strip-val strip-val-sm" id="rangePeakValue">—</span>
-                </div>
-            </div>
-
-            <!-- Historical Bar Chart -->
-            <div class="chart-frame history-frame">
-                <canvas id="historyCanvas"></canvas>
-            </div>
-
-            <!-- Collapsible Detailed Log Table -->
-            <details class="Clean-details">
-                <summary>
-                    <span>Detailed Time Interval Breakdown (<span id="timelineRowCount">0</span> intervals)</span>
-                    <span class="details-chevron">Expand Table</span>
-                </summary>
-                <div class="table-container">
-                    <table class="pro-table">
-                        <thead>
-                            <tr>
-                                <th>Time Interval</th>
-                                <th class="num-col">Download</th>
-                                <th class="num-col">Upload</th>
-                                <th class="num-col">Total</th>
-                                <th>Period Share</th>
-                            </tr>
-                        </thead>
-                        <tbody id="timelineTableBody"></tbody>
-                    </table>
-                </div>
-            </details>
-        </section>
-
-        <!-- Wi-Fi Networks Data Consumption Section -->
-        <section class="surface-panel">
-            <div class="panel-head">
-                <div class="panel-titles">
-                    <h2 class="section-title">Wi-Fi Networks — Data Consumption by SSID (<span id="wifiCountLabel">0</span>)</h2>
-                    <p class="section-subtitle">All Wi-Fi networks connected on this Mac ordered by recent activity &amp; recorded bandwidth consumption</p>
-                </div>
-                <div class="segmented-control seg-sm">
-                    <button class="seg-btn active" id="wifiModeAllBtn" onclick="setWiFiViewMode('all')">All Connected Wi-Fi</button>
-                    <button class="seg-btn" id="wifiModeUsedBtn" onclick="setWiFiViewMode('used')">With Traffic Only</button>
-                </div>
-            </div>
-
-            <div class="filter-input-wrap">
-                <input type="text" id="wifiSearchInput" class="input-control search-field" placeholder="Search Wi-Fi network name (e.g., jedlikova17, Zborovna_wifi, eduroam...)" oninput="if (state.realtimeData) renderWiFiUsageTable(state.realtimeData.wifi_usage || [])">
-            </div>
-
-            <div class="table-container" style="max-height: 360px;">
-                <table class="pro-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Wi-Fi Network (SSID)</th>
-                            <th>Status</th>
-                            <th class="num-col">Today</th>
-                            <th class="num-col">This Week</th>
-                            <th class="num-col">This Month</th>
-                            <th class="num-col">All-Time Download</th>
-                            <th class="num-col">All-Time Upload</th>
-                            <th class="num-col">All-Time Total</th>
-                            <th>Wi-Fi Share</th>
-                        </tr>
-                    </thead>
-                    <tbody id="wifiUsageTableBody"></tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- Bottom Split Layout: Applications & System Interfaces/Sockets -->
-        <div class="split-grid">
-            <!-- Left: Application Traffic Matrix -->
-            <section class="surface-panel">
-                <div class="panel-head">
-                    <div class="panel-titles">
-                        <h2 class="section-title">Application &amp; Process Bandwidth</h2>
-                        <p class="section-subtitle">Click any process to inspect its 24h profile or terminate it</p>
-                    </div>
-                    <div class="segmented-control seg-sm">
-                        <button class="seg-btn active" id="appModeLiveBtn" onclick="setAppViewMode('live')">Live Session</button>
-                        <button class="seg-btn" id="appModeHistBtn" onclick="setAppViewMode('history')">Filtered Period</button>
-                    </div>
-                </div>
-
-                <div class="filter-input-wrap">
-                    <input type="text" id="appSearchInput" class="input-control search-field" placeholder="Filter process or application (e.g., Chrome, Teams, Safari...)" oninput="renderAppTable()">
-                </div>
-
-                <div class="table-container app-table-height">
-                    <table class="pro-table">
-                        <thead>
-                            <tr>
-                                <th>Application / Process</th>
-                                <th id="appColSpeed" class="num-col">Rate</th>
-                                <th class="num-col">Download</th>
-                                <th class="num-col">Upload</th>
-                                <th class="num-col">Total</th>
-                                <th class="num-col">Inspect</th>
-                            </tr>
-                        </thead>
-                        <tbody id="appTableBody"></tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Right: Network Interfaces + Active Connections -->
-            <div class="side-stack">
-                <section class="surface-panel">
-                    <div class="panel-head">
-                        <div class="panel-titles">
-                            <h2 class="section-title">Network Interfaces</h2>
-                            <p class="section-subtitle">Physical adapters &amp; virtual VPN tunnels (getifaddrs)</p>
+                <div class="topbar-right">
+                    <div class="rate-pill-group">
+                        <div class="rate-pill">
+                            <span class="dot-indicator down-bg"></span>
+                            <span class="rate-pill-lbl">DOWN</span>
+                            <span class="rate-pill-val" id="headerSpeedIn">0 B/s</span>
+                        </div>
+                        <div class="rate-pill-divider"></div>
+                        <div class="rate-pill">
+                            <span class="dot-indicator up-bg"></span>
+                            <span class="rate-pill-lbl">UP</span>
+                            <span class="rate-pill-val" id="headerSpeedOut">0 B/s</span>
                         </div>
                     </div>
-                    <div class="iface-stack" id="interfacesList"></div>
-                </section>
 
-                <section class="surface-panel">
-                    <div class="panel-head">
-                        <div class="panel-titles">
-                            <h2 class="section-title">Active Sockets, GeoIP &amp; Security</h2>
-                            <p class="section-subtitle">Live endpoints with country flag, ASN/ISP &amp; security verification</p>
+                    <div class="ping-pill" title="Internet Latency (1.1.1.1)">
+                        <span class="status-dot online" id="headerPingDot"></span>
+                        <span id="headerPingVal">— ms</span>
+                    </div>
+
+                    <button class="btn btn-ghost btn-sm" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click OTA Update">
+                        <span id="topUpdateLabel">v2.4.0</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Scrollable Content Canvas -->
+            <main class="workspace">
+                <!-- Auto-Update Notification Banner -->
+                <div id="updateNotificationBanner" class="alert-item alert-update hidden">
+                    <div>
+                        <strong id="updateBannerTitle">New NetPulse Update Available</strong>
+                        <span id="updateBannerNotes" style="margin-left:10px;opacity:0.85;"></span>
+                    </div>
+                    <button class="btn btn-primary btn-xs" id="updateBannerBtn" onclick="installUpdate()">Install Update Now</button>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 1: OVERVIEW (Live Dashboard)
+                     ========================================================= -->
+                <div id="view-overview" class="view-pane active">
+                    <!-- 4 KPI Period Cards -->
+                    <section class="kpi-grid">
+                        <div class="kpi-card active-period" data-preset="today" onclick="jumpToPeriod('today')">
+                            <div class="kpi-card-top">
+                                <span class="kpi-period">TODAY</span>
+                                <span class="kpi-meta" id="todayDateLabel">—</span>
+                            </div>
+                            <div class="kpi-primary" id="sumTodayTotal">0 B</div>
+                            <div class="kpi-breakdown">
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm down-bg"></i>IN</span><span class="flow-val" id="sumTodayIn">0 B</span></div>
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span><span class="flow-val" id="sumTodayOut">0 B</span></div>
+                            </div>
+                            <div class="quota-progress hidden" id="limitWrapDaily">
+                                <div class="quota-track"><div class="quota-fill" id="limitFillDaily"></div></div>
+                                <span class="quota-label" id="limitTextDaily"></span>
+                            </div>
                         </div>
-                        <button class="btn btn-ghost btn-xs" onclick="fetchConnections()">Refresh</button>
+
+                        <div class="kpi-card" data-preset="this_week" onclick="jumpToPeriod('this_week')">
+                            <div class="kpi-card-top">
+                                <span class="kpi-period">THIS WEEK</span>
+                                <span class="kpi-meta">7d: <strong id="sum7dTotal">0 B</strong></span>
+                            </div>
+                            <div class="kpi-primary" id="sumWeekTotal">0 B</div>
+                            <div class="kpi-breakdown">
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm down-bg"></i>IN</span><span class="flow-val" id="sumWeekIn">0 B</span></div>
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span><span class="flow-val" id="sumWeekOut">0 B</span></div>
+                            </div>
+                            <div class="quota-progress hidden" id="limitWrapWeekly">
+                                <div class="quota-track"><div class="quota-fill" id="limitFillWeekly"></div></div>
+                                <span class="quota-label" id="limitTextWeekly"></span>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card" data-preset="this_month" onclick="jumpToPeriod('this_month')">
+                            <div class="kpi-card-top">
+                                <span class="kpi-period">THIS MONTH</span>
+                                <span class="kpi-meta">30d: <strong id="sum30dTotal">0 B</strong></span>
+                            </div>
+                            <div class="kpi-primary" id="sumMonthTotal">0 B</div>
+                            <div class="kpi-breakdown">
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm down-bg"></i>IN</span><span class="flow-val" id="sumMonthIn">0 B</span></div>
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span><span class="flow-val" id="sumMonthOut">0 B</span></div>
+                            </div>
+                            <div class="quota-progress hidden" id="limitWrapMonthly">
+                                <div class="quota-track"><div class="quota-fill" id="limitFillMonthly"></div></div>
+                                <span class="quota-label" id="limitTextMonthly"></span>
+                            </div>
+                        </div>
+
+                        <div class="kpi-card" data-preset="this_year" onclick="jumpToPeriod('this_year')">
+                            <div class="kpi-card-top">
+                                <span class="kpi-period">THIS YEAR / TOTAL</span>
+                                <span class="kpi-meta">Yesterday: <strong id="sumYesterdayTotal">0 B</strong></span>
+                            </div>
+                            <div class="kpi-primary" id="sumYearTotal">0 B</div>
+                            <div class="kpi-breakdown">
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm down-bg"></i>IN</span><span class="flow-val" id="sumYearIn">0 B</span></div>
+                                <div class="kpi-flow"><span class="flow-label"><i class="dot-sm up-bg"></i>OUT</span><span class="flow-val" id="sumYearOut">0 B</span></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Compact 4-Column Diagnostics Strip -->
+                    <section class="diag-strip">
+                        <div class="diag-item" onclick="switchView('wifi')" style="cursor:pointer;" title="Click to open Wi-Fi Networks breakdown">
+                            <span class="diag-label">ACTIVE WI-FI / NETWORK</span>
+                            <span class="diag-value" id="diagProfile">Detecting...</span>
+                            <span class="diag-sub" id="diagLocalIP">Local IP: —</span>
+                            <span class="diag-sub wifi-usage-inline" id="diagWiFiUsage">Today: 0 B · Total: 0 B</span>
+                        </div>
+
+                        <div class="diag-item" onclick="copyPublicIP()" style="cursor:pointer;" title="Click to copy Public IP address">
+                            <div class="diag-label-row">
+                                <span class="diag-label">PUBLIC IP &amp; PROVIDER</span>
+                                <span class="copy-hint">Click to copy</span>
+                            </div>
+                            <span class="diag-value" id="diagPublicIP">Resolving...</span>
+                            <span class="diag-sub" id="diagISP">—</span>
+                            <span class="diag-sub" id="diagLocation">Location: —</span>
+                        </div>
+
+                        <div class="diag-item">
+                            <span class="diag-label">NETWORK LATENCY (PING)</span>
+                            <div class="ping-grid">
+                                <div>
+                                    <span class="ping-lbl">Gateway</span>
+                                    <strong class="ping-val" id="diagPingRouter">—</strong>
+                                </div>
+                                <div>
+                                    <span class="ping-lbl">Internet (1.1.1.1)</span>
+                                    <strong class="ping-val" id="diagPingInternet">—</strong>
+                                </div>
+                            </div>
+                            <span class="diag-sub" id="diagHealthLabel">Connection quality: —</span>
+                        </div>
+
+                        <div class="diag-item diag-item-action">
+                            <div>
+                                <span class="diag-label">MULTI-CDN SPEEDTEST</span>
+                                <span class="diag-value" id="diagSpeedtestVal">Ready to test</span>
+                                <span class="diag-sub" id="diagDbSize">SQLite DB: — KB</span>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="runSpeedtestBtn" onclick="triggerSpeedtest()">Run Test</button>
+                        </div>
+                    </section>
+
+                    <!-- Real-Time 120s Throughput Stream -->
+                    <section class="surface-panel">
+                        <div class="panel-head">
+                            <div class="panel-titles">
+                                <h2 class="section-title">Real-Time Throughput Stream</h2>
+                                <p class="section-subtitle">120-second rolling window (hover chart to inspect exact 1s rates)</p>
+                            </div>
+                            <div class="panel-controls">
+                                <div class="chart-legend">
+                                    <span class="legend-item"><i class="dot-sm down-bg"></i>Download</span>
+                                    <span class="legend-item"><i class="dot-sm up-bg"></i>Upload</span>
+                                </div>
+                                <div class="metric-chip">
+                                    <span class="chip-label">Peak IN</span>
+                                    <span class="chip-val down-text" id="peakSpeedIn">0 B/s</span>
+                                </div>
+                                <div class="metric-chip">
+                                    <span class="chip-label">Peak OUT</span>
+                                    <span class="chip-val up-text" id="peakSpeedOut">0 B/s</span>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" id="pauseRealtimeBtn" onclick="toggleRealtimePause()">Pause</button>
+                            </div>
+                        </div>
+                        <div class="chart-frame realtime-frame">
+                            <canvas id="realtimeCanvas"></canvas>
+                        </div>
+                    </section>
+
+                    <!-- Overview Bottom 2-Column Glance: Top Live Apps & Top Wi-Fi Networks -->
+                    <div class="overview-split">
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Top Active Processes</h2>
+                                    <p class="section-subtitle">Click any process to inspect sockets &amp; 24h profile</p>
+                                </div>
+                                <button class="btn btn-ghost btn-xs" onclick="switchView('apps')">View All Processes</button>
+                            </div>
+                            <div class="table-container" style="max-height: 265px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Process</th>
+                                            <th class="num-col">Live Rate</th>
+                                            <th class="num-col">Session Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="overviewAppsBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Top Wi-Fi Networks by Usage</h2>
+                                    <p class="section-subtitle">Click any SSID to inspect 30-day history</p>
+                                </div>
+                                <button class="btn btn-ghost btn-xs" onclick="switchView('wifi')">View All Wi-Fi</button>
+                            </div>
+                            <div class="table-container" style="max-height: 265px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Wi-Fi SSID</th>
+                                            <th class="num-col">Today</th>
+                                            <th class="num-col">All-Time Total</th>
+                                            <th>Share</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="overviewWifiBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
                     </div>
-                    <div class="table-container conn-table-height">
-                        <table class="pro-table compact">
-                            <thead>
-                                <tr>
-                                    <th>Process</th>
-                                    <th>Proto / Port</th>
-                                    <th>Remote Endpoint</th>
-                                    <th>Country &amp; Organization (ASN/ISP)</th>
-                                    <th>Security</th>
-                                </tr>
-                            </thead>
-                            <tbody id="connectionsTableBody"></tbody>
-                        </table>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 2: WI-FI NETWORKS (Per-SSID Consumption)
+                     ========================================================= -->
+                <div id="view-wifi" class="view-pane">
+                    <section class="summary-strip summary-strip-3" style="margin-top:0;">
+                        <div class="strip-cell">
+                            <span class="strip-label">CONNECTED WI-FI NETWORK</span>
+                            <span class="strip-val down-text" id="wifiSumActiveName">—</span>
+                            <span class="strip-sub" id="wifiSumActiveToday">Today: 0 B</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">HIGHEST CONSUMPTION WI-FI</span>
+                            <span class="strip-val" id="wifiSumTopName">—</span>
+                            <span class="strip-sub" id="wifiSumTopVal">All-Time: 0 B</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">KNOWN &amp; TRACKED WI-FI NETWORKS</span>
+                            <span class="strip-val" id="wifiSumCounts">0 Active / 0 Saved</span>
+                            <span class="strip-sub">Click any row below for 30-day daily chart</span>
+                        </div>
+                    </section>
+
+                    <section class="surface-panel">
+                        <div class="panel-head">
+                            <div class="panel-titles">
+                                <h2 class="section-title">Wi-Fi Networks — Bandwidth by SSID (<span id="wifiCountLabel">0</span>)</h2>
+                                <p class="section-subtitle">Click column headers to sort, or click any Wi-Fi row to inspect its daily consumption chart</p>
+                            </div>
+                            <div class="segmented-control seg-sm">
+                                <button class="seg-btn active" id="wifiModeUsedBtn" onclick="setWiFiViewMode('used')">With Recorded Traffic</button>
+                                <button class="seg-btn" id="wifiModeAllBtn" onclick="setWiFiViewMode('all')">All Saved on Mac</button>
+                            </div>
+                        </div>
+
+                        <div class="search-bar-wrap">
+                            <svg class="search-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="wifiSearchInput" class="input-control search-input" placeholder="Search Wi-Fi SSID (e.g., jedlikova17, Predam_bicykel, eduroam...)" oninput="onWifiSearchInput()">
+                            <button class="search-clear hidden" id="wifiSearchClear" onclick="clearWifiSearch()" title="Clear search">&times;</button>
+                        </div>
+
+                        <div class="table-container table-tall">
+                            <table class="pro-table sortable-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:42px;">#</th>
+                                        <th class="sortable" onclick="setWifiSort('ssid')">Wi-Fi Network (SSID) <span id="wifiSort_ssid" class="sort-ind"></span></th>
+                                        <th>Status</th>
+                                        <th class="num-col sortable" onclick="setWifiSort('today_total')">Today <span id="wifiSort_today_total" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setWifiSort('week_total')">This Week <span id="wifiSort_week_total" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setWifiSort('month_total')">This Month <span id="wifiSort_month_total" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setWifiSort('all_in')">Download <span id="wifiSort_all_in" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setWifiSort('all_out')">Upload <span id="wifiSort_all_out" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setWifiSort('all_total')">All-Time Total <span id="wifiSort_all_total" class="sort-ind">▼</span></th>
+                                        <th style="width:140px;">Share</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wifiUsageTableBody"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 3: HISTORY & ANALYTICS
+                     ========================================================= -->
+                <div id="view-history" class="view-pane">
+                    <section class="surface-panel">
+                        <div class="panel-head">
+                            <div class="panel-titles">
+                                <h2 class="section-title">Historical Bandwidth &amp; Custom Date Analytics</h2>
+                                <p class="section-subtitle">Inspect hourly, daily, or monthly transfer totals and export reports</p>
+                            </div>
+                            <div class="panel-controls">
+                                <button class="btn btn-ghost btn-sm" onclick="exportData('csv')">Export CSV</button>
+                                <button class="btn btn-ghost btn-sm" onclick="exportData('json')">Export JSON</button>
+                            </div>
+                        </div>
+
+                        <div class="filter-toolbar">
+                            <div class="segmented-control" id="presetTabs">
+                                <button class="seg-btn active" data-preset="today" onclick="selectPreset('today')">Today</button>
+                                <button class="seg-btn" data-preset="yesterday" onclick="selectPreset('yesterday')">Yesterday</button>
+                                <button class="seg-btn" data-preset="this_week" onclick="selectPreset('this_week')">This Week</button>
+                                <button class="seg-btn" data-preset="last_7_days" onclick="selectPreset('last_7_days')">Last 7 Days</button>
+                                <button class="seg-btn" data-preset="this_month" onclick="selectPreset('this_month')">This Month</button>
+                                <button class="seg-btn" data-preset="last_30_days" onclick="selectPreset('last_30_days')">Last 30 Days</button>
+                                <button class="seg-btn" data-preset="this_year" onclick="selectPreset('this_year')">This Year</button>
+                                <button class="seg-btn" data-preset="custom" onclick="selectPreset('custom')">Custom Range</button>
+                            </div>
+
+                            <div class="custom-range-bar">
+                                <div class="field-inline">
+                                    <label for="filterStartDate">From</label>
+                                    <input type="date" id="filterStartDate" class="input-control">
+                                </div>
+                                <div class="field-inline">
+                                    <label for="filterEndDate">To</label>
+                                    <input type="date" id="filterEndDate" class="input-control">
+                                </div>
+                                <div class="field-inline">
+                                    <label for="filterGroupBy">Granularity</label>
+                                    <select id="filterGroupBy" class="select-control" onchange="fetchHistory()">
+                                        <option value="auto">Automatic</option>
+                                        <option value="hour">Hourly (00:00 – 23:00)</option>
+                                        <option value="day">Daily</option>
+                                        <option value="month">Monthly</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary btn-sm" onclick="applyCustomFilter()">Apply Filter</button>
+                            </div>
+                        </div>
+
+                        <div class="summary-strip">
+                            <div class="strip-cell">
+                                <span class="strip-label">TOTAL VOLUME IN PERIOD</span>
+                                <span class="strip-val" id="rangeTotalValue">0 B</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">DOWNLOADED (INGRESS)</span>
+                                <span class="strip-val down-text" id="rangeInValue">0 B</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">UPLOADED (EGRESS)</span>
+                                <span class="strip-val up-text" id="rangeOutValue">0 B</span>
+                            </div>
+                            <div class="strip-cell">
+                                <span class="strip-label">PEAK INTERVAL</span>
+                                <span class="strip-val strip-val-sm" id="rangePeakValue">—</span>
+                            </div>
+                        </div>
+
+                        <div class="chart-frame history-frame">
+                            <canvas id="historyCanvas"></canvas>
+                        </div>
+                    </section>
+
+                    <div class="overview-split">
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Time Interval Breakdown (<span id="timelineRowCount">0</span>)</h2>
+                                    <p class="section-subtitle">Chronological breakdown for the selected period</p>
+                                </div>
+                            </div>
+                            <div class="table-container" style="max-height: 340px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Interval</th>
+                                            <th class="num-col">Download</th>
+                                            <th class="num-col">Upload</th>
+                                            <th class="num-col">Total</th>
+                                            <th>Share</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="timelineTableBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Top Applications in Period</h2>
+                                    <p class="section-subtitle">Recorded SQLite process totals for the selected date range</p>
+                                </div>
+                            </div>
+                            <div class="table-container" style="max-height: 340px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Application</th>
+                                            <th class="num-col">Download</th>
+                                            <th class="num-col">Upload</th>
+                                            <th class="num-col">Total</th>
+                                            <th>Share</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="historyTopAppsBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
                     </div>
-                </section>
-            </div>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 4: APPLICATIONS & PROCESSES
+                     ========================================================= -->
+                <div id="view-apps" class="view-pane">
+                    <section class="surface-panel">
+                        <div class="panel-head">
+                            <div class="panel-titles">
+                                <h2 class="section-title">Application &amp; Process Bandwidth Matrix</h2>
+                                <p class="section-subtitle">Click column headers to sort, or click any process row to inspect sockets, GeoIP &amp; 24h usage</p>
+                            </div>
+                            <div class="segmented-control seg-sm">
+                                <button class="seg-btn active" id="appModeLiveBtn" onclick="setAppViewMode('live')">Live Session</button>
+                                <button class="seg-btn" id="appModeHistBtn" onclick="setAppViewMode('history')">Filtered Period</button>
+                            </div>
+                        </div>
+
+                        <div class="search-bar-wrap">
+                            <svg class="search-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="appSearchInput" class="input-control search-input" placeholder="Filter process or application (e.g., Chrome, Safari, Teams, cloudd...)" oninput="onAppSearchInput()">
+                            <button class="search-clear hidden" id="appSearchClear" onclick="clearAppSearch()" title="Clear search">&times;</button>
+                        </div>
+
+                        <div class="table-container table-tall">
+                            <table class="pro-table sortable-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:42px;">#</th>
+                                        <th class="sortable" onclick="setAppSort('name')">Application / Process <span id="appSort_name" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setAppSort('metric')"><span id="appColSpeed">Live Rate</span> <span id="appSort_metric" class="sort-ind">▼</span></th>
+                                        <th class="num-col sortable" onclick="setAppSort('bytes_in')">Download <span id="appSort_bytes_in" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setAppSort('bytes_out')">Upload <span id="appSort_bytes_out" class="sort-ind"></span></th>
+                                        <th class="num-col sortable" onclick="setAppSort('total')">Total <span id="appSort_total" class="sort-ind"></span></th>
+                                        <th class="num-col" style="width:100px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="appTableBody"></tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- =========================================================
+                     VIEW 5: SOCKETS, GEOIP & HARDWARE ADAPTERS
+                     ========================================================= -->
+                <div id="view-network" class="view-pane">
+                    <section class="summary-strip" style="margin-top:0;">
+                        <div class="strip-cell">
+                            <span class="strip-label">OPEN ACTIVE SOCKETS</span>
+                            <span class="strip-val" id="netSumSockets">0</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">VERIFIED TLS / LOCAL</span>
+                            <span class="strip-val down-text" id="netSumVerified">0</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">UNENCRYPTED / CUSTOM PORT</span>
+                            <span class="strip-val" id="netSumWarnings">0</span>
+                        </div>
+                        <div class="strip-cell">
+                            <span class="strip-label">REMOTE COUNTRIES (GEOIP)</span>
+                            <span class="strip-val strip-val-sm" id="netSumCountries">—</span>
+                        </div>
+                    </section>
+
+                    <div class="split-grid">
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Active Sockets, GeoIP &amp; Security Audit</h2>
+                                    <p class="section-subtitle">Live TCP/UDP endpoints with ISO country code, BGP ASN/ISP &amp; port verification</p>
+                                </div>
+                                <div class="panel-controls">
+                                    <div class="segmented-control seg-sm">
+                                        <button class="seg-btn active" data-sec="all" onclick="setSocketFilter('all')">All</button>
+                                        <button class="seg-btn" data-sec="verified" onclick="setSocketFilter('verified')">Verified</button>
+                                        <button class="seg-btn" data-sec="warning" onclick="setSocketFilter('warning')">Alerts</button>
+                                        <button class="seg-btn" data-sec="local" onclick="setSocketFilter('local')">Local</button>
+                                    </div>
+                                    <button class="btn btn-ghost btn-xs" onclick="fetchConnections()">Refresh</button>
+                                </div>
+                            </div>
+
+                            <div class="search-bar-wrap">
+                                <svg class="search-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" id="connSearchInput" class="input-control search-input" placeholder="Filter by process, IP address, country, or ASN organization..." oninput="renderConnectionsTable(state.connectionsData || [])">
+                            </div>
+
+                            <div class="table-container" style="max-height: 440px;">
+                                <table class="pro-table compact">
+                                    <thead>
+                                        <tr>
+                                            <th>Process</th>
+                                            <th>Proto / Port</th>
+                                            <th>Remote Endpoint</th>
+                                            <th>Country &amp; Organization (ASN/ISP)</th>
+                                            <th>Security</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="connectionsTableBody"></tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section class="surface-panel">
+                            <div class="panel-head">
+                                <div class="panel-titles">
+                                    <h2 class="section-title">Hardware &amp; VPN Interfaces</h2>
+                                    <p class="section-subtitle">Kernel adapter counters via getifaddrs()</p>
+                                </div>
+                            </div>
+                            <div class="iface-stack" id="interfacesList"></div>
+                        </section>
+                    </div>
+                </div>
+            </main>
         </div>
-    </main>
+    </div>
 
-    <!-- App Inspector Modal (Per-App Hourly Chart, GeoIP & Security Inspector) -->
-    <div id="appDetailModal" class="modal-backdrop hidden">
+    <!-- Floating Interactive Chart Tooltip -->
+    <div id="chartTooltip" class="chart-tooltip hidden"></div>
+
+    <!-- Subtle Bottom-Right Toast Notification -->
+    <div id="toastBanner" class="toast-banner hidden"></div>
+
+    <!-- Process Inspector Modal -->
+    <div id="appDetailModal" class="modal-backdrop hidden" onclick="if(event.target===this)closeAppInspector()">
         <div class="modal-dialog modal-lg">
             <div class="modal-head">
                 <div>
                     <h3 class="modal-title" id="inspectorAppTitle">Process Profile</h3>
                     <p class="modal-subtitle">24-hour bandwidth distribution, GeoIP country lookup, ASN/ISP &amp; socket security audit</p>
                 </div>
-                <button class="btn-close" onclick="closeAppInspector()">✕</button>
+                <button class="btn-close" onclick="closeAppInspector()">&times;</button>
             </div>
             <div class="modal-content">
-                <div class="chart-frame" style="height:165px;margin-bottom:12px;">
+                <div class="chart-frame" style="height:170px;margin-bottom:12px;">
                     <canvas id="appDetailCanvas"></canvas>
                 </div>
                 <div class="inspector-geo-strip" id="inspectorGeoSummary">
@@ -469,7 +696,7 @@
                         <strong id="inspSecurityStatus" class="sec-text-ok">Verified</strong>
                     </div>
                 </div>
-                <div class="table-container" style="max-height:200px;margin-top:10px;">
+                <div class="table-container" style="max-height:210px;margin-top:10px;">
                     <table class="pro-table compact">
                         <thead>
                             <tr>
@@ -491,20 +718,68 @@
         </div>
     </div>
 
+    <!-- Wi-Fi Network 30-Day Inspector Modal -->
+    <div id="wifiDetailModal" class="modal-backdrop hidden" onclick="if(event.target===this)closeWifiInspector()">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-head">
+                <div>
+                    <h3 class="modal-title" id="inspectorWifiTitle">Wi-Fi Network History</h3>
+                    <p class="modal-subtitle">Last 30 days of recorded data consumption on this Wi-Fi network</p>
+                </div>
+                <button class="btn-close" onclick="closeWifiInspector()">&times;</button>
+            </div>
+            <div class="modal-content">
+                <div class="summary-strip summary-strip-3" style="margin-top:0;margin-bottom:12px;">
+                    <div class="strip-cell">
+                        <span class="strip-label">30-DAY TOTAL</span>
+                        <span class="strip-val" id="wifiInspTotal">0 B</span>
+                    </div>
+                    <div class="strip-cell">
+                        <span class="strip-label">30-DAY DOWNLOAD</span>
+                        <span class="strip-val down-text" id="wifiInspIn">0 B</span>
+                    </div>
+                    <div class="strip-cell">
+                        <span class="strip-label">30-DAY UPLOAD</span>
+                        <span class="strip-val up-text" id="wifiInspOut">0 B</span>
+                    </div>
+                </div>
+                <div class="chart-frame" style="height:185px;margin-bottom:12px;">
+                    <canvas id="wifiDetailCanvas"></canvas>
+                </div>
+                <div class="table-container" style="max-height:200px;">
+                    <table class="pro-table compact">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th class="num-col">Download</th>
+                                <th class="num-col">Upload</th>
+                                <th class="num-col">Daily Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="wifiInspectorBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeWifiInspector()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings, Storage & Quotas Modal -->
-    <div id="limitsModal" class="modal-backdrop hidden">
+    <div id="limitsModal" class="modal-backdrop hidden" onclick="if(event.target===this)closeLimitsModal()">
         <div class="modal-dialog">
             <div class="modal-head">
                 <div>
                     <h3 class="modal-title">Quotas, System &amp; Updates</h3>
                     <p class="modal-subtitle">Configure bandwidth caps, GitHub OTA updates, and background startup</p>
                 </div>
-                <button class="btn-close" onclick="closeLimitsModal()">✕</button>
+                <button class="btn-close" onclick="closeLimitsModal()">&times;</button>
             </div>
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.3.4)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.4.0)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>

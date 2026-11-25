@@ -194,8 +194,23 @@ final class NetPulseSchemeHandler: NSObject, WKURLSchemeHandler {
             return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
         }
 
+        if path == "/api/wifi_detail" {
+            let ssid = param("ssid", "")
+            let daily = db.queryWiFiDailyHistory(ssid: ssid)
+            let totalIn = daily.reduce(0) { $0 + $1.bytes_in }
+            let totalOut = daily.reduce(0) { $0 + $1.bytes_out }
+            let dict: [String: Any] = [
+                "ssid": ssid,
+                "daily": encodeToObject(daily),
+                "total_in": totalIn,
+                "total_out": totalOut,
+                "total": totalIn + totalOut
+            ]
+            return (try? JSONSerialization.data(withJSONObject: dict)) ?? Data()
+        }
+
         if path == "/api/connections" {
-            let conns = engine.getActiveConnections(limit: 40)
+            let conns = engine.getActiveConnections(limit: 50)
             return (try? JSONSerialization.data(withJSONObject: ["connections": encodeToObject(conns)])) ?? Data()
         }
 
@@ -247,6 +262,13 @@ final class NativeActionHandler: NSObject, WKScriptMessageHandler {
         case "reveal_db":
             let dbURL = URL(fileURLWithPath: SQLiteManager.shared.dbPath)
             NSWorkspace.shared.activateFileViewerSelecting([dbURL])
+
+        case "copy_text":
+            if let text = dict["text"] as? String, !text.isEmpty {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(text, forType: .string)
+            }
 
         case "save_settings":
             if let settings = dict["settings"] as? [String: String] {

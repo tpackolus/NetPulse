@@ -80,12 +80,12 @@ struct DiagnosticsInfo: Codable {
     var db_size_kb: Int64 = 0
     var speedtest_down_mbps: Double = 0
     var speedtest_running: Bool = false
-    var app_version: String = "2.3.4"
-    var latest_version: String = "2.3.4"
+    var app_version: String = "2.4.0"
+    var latest_version: String = "2.4.0"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.3.4)"
+    var update_status: String = "Up to date (v2.4.0)"
     var update_notes: String = ""
 }
 
@@ -309,7 +309,7 @@ final class SQLiteManager {
             sqlite3_finalize(stmt)
         }
 
-        if totalIn > 0 || totalOut > 0 {
+        if totalIn > 0 || totalOut > 0, profile != "Disconnected", profile != "Offline", !profile.isEmpty {
             let profSQL = """
                 INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
                 VALUES (?, ?, ?, ?)
@@ -545,11 +545,24 @@ final class SQLiteManager {
     }
 
     func attributeGenericWiFiRowsIfNeeded(activeSSID: String) {
-        let genericNames: Set<String> = ["Wi-Fi (en0)", "Wi-Fi / LAN", "Wi-Fi", "Ethernet / Offline", "—", ""]
-        guard !genericNames.contains(activeSSID) else { return }
-
         lock.lock()
         defer { lock.unlock() }
+
+        // Rename any legacy 'Offline' rows (recorded during wired/USB tethering or brief DHCP transitions) to 'Wired / Hotspot'
+        execSQL("""
+            INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
+            SELECT date, 'Wired / Hotspot', SUM(bytes_in), SUM(bytes_out)
+            FROM profile_traffic
+            WHERE profile = 'Offline'
+            GROUP BY date
+            ON CONFLICT(date, profile) DO UPDATE SET
+                bytes_in = profile_traffic.bytes_in + excluded.bytes_in,
+                bytes_out = profile_traffic.bytes_out + excluded.bytes_out;
+            DELETE FROM profile_traffic WHERE profile = 'Offline';
+        """)
+
+        let genericNames: Set<String> = ["Wi-Fi (en0)", "Wi-Fi / LAN", "Wi-Fi", "Ethernet / Offline", "Wired / Hotspot", "Disconnected", "—", ""]
+        guard !genericNames.contains(activeSSID) else { return }
 
         let mergeSQL = """
             INSERT INTO profile_traffic (date, profile, bytes_in, bytes_out)
@@ -569,6 +582,53 @@ final class SQLiteManager {
         sqlite3_finalize(stmt)
 
         execSQL("DELETE FROM profile_traffic WHERE profile IN ('Wi-Fi (en0)', 'Wi-Fi / LAN', 'Ethernet / Offline');")
+    }
+
+    func queryWiFiDailyHistory(ssid: String) -> [TimelineRow] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let cal = Calendar.current
+        let now = Date()
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let start30 = fmt.string(from: cal.date(byAdding: .day, value: -29, to: now)!)
+
+        var rawMap: [String: (Int64, Int64)] = [:]
+        let sql = """
+            SELECT date, SUM(bytes_in), SUM(bytes_out)
+            FROM profile_traffic
+            WHERE profile = ? AND date >= ?
+            GROUP BY date
+            ORDER BY date ASC;
+        """
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (ssid as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (start30 as NSString).utf8String, -1, nil)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let dPtr = sqlite3_column_text(stmt, 0) {
+                    let d = String(cString: dPtr)
+                    let bi = sqlite3_column_int64(stmt, 1)
+                    let bo = sqlite3_column_int64(stmt, 2)
+                    rawMap[d] = (bi, bo)
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+
+        var rows: [TimelineRow] = []
+        if let sDate = fmt.date(from: start30) {
+            var cur = sDate
+            while cur <= now {
+                let dStr = fmt.string(from: cur)
+                let (bi, bo) = rawMap[dStr] ?? (0, 0)
+                rows.append(TimelineRow(label: dStr, bytes_in: bi, bytes_out: bo, total: bi + bo))
+                guard let next = cal.date(byAdding: .day, value: 1, to: cur) else { break }
+                cur = next
+            }
+        }
+        return rows
     }
 
     func getWiFiUsage(activeProfile: String, preferredSSIDs: [String] = []) -> [WiFiUsageRow] {
@@ -645,7 +705,7 @@ final class SQLiteManager {
         sqlite3_finalize(stmt)
 
         let cleanActive = activeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanActive.isEmpty && cleanActive != "—" && !seenSSIDs.contains(cleanActive) {
+        if !cleanActive.isEmpty && cleanActive != "—" && cleanActive != "Disconnected" && cleanActive != "Offline" && !seenSSIDs.contains(cleanActive) {
             seenSSIDs.insert(cleanActive)
             rows.insert(WiFiUsageRow(
                 ssid: cleanActive,
