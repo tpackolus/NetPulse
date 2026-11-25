@@ -89,6 +89,18 @@ function formatSpeed(bytesPerSec) {
     return `${formatBytes(bytesPerSec, 2)}/s`;
 }
 
+function formatSpeedFixed(bytesPerSec) {
+    if (!bytesPerSec || bytesPerSec < 102.4) return '0.0 KB/s';
+    if (bytesPerSec >= 1024 * 1024 * 1024) {
+        return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(2)} GB/s`;
+    }
+    if (bytesPerSec >= 1024 * 1024) {
+        return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
+    }
+    const kb = bytesPerSec / 1024;
+    return kb >= 100 ? `${kb.toFixed(0)} KB/s` : `${kb.toFixed(1)} KB/s`;
+}
+
 function toISODate(d) {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -339,10 +351,10 @@ function copyPublicIP() {
 }
 
 function updateRealtimeUI(data) {
-    document.getElementById('headerSpeedIn').textContent = formatSpeed(data.speed_in);
-    document.getElementById('headerSpeedOut').textContent = formatSpeed(data.speed_out);
-    document.getElementById('peakSpeedIn').textContent = formatSpeed(data.peak_speed_in);
-    document.getElementById('peakSpeedOut').textContent = formatSpeed(data.peak_speed_out);
+    document.getElementById('headerSpeedIn').textContent = formatSpeedFixed(data.speed_in);
+    document.getElementById('headerSpeedOut').textContent = formatSpeedFixed(data.speed_out);
+    document.getElementById('peakSpeedIn').textContent = formatSpeedFixed(data.peak_speed_in);
+    document.getElementById('peakSpeedOut').textContent = formatSpeedFixed(data.peak_speed_out);
 
     const wifiList = Array.isArray(data.wifi_usage) ? data.wifi_usage : [];
     const activeWifi = wifiList.find(w => w.is_active);

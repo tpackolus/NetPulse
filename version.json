@@ -1,7 +1,7 @@
 {
-  "version": "2.5.0",
-  "build": 250,
+  "version": "2.5.1",
+  "build": 251,
   "release_date": "2026-11-25",
   "download_url": "https://raw.githubusercontent.com/tpackolus/NetPulse/main/NetPulse-Mac-Installer.zip",
-  "notes": "v2.5.0 — Added all 6 Pro features: Per-Wi-Fi App Usage & Hotspot Quotas, Bidirectional Speedtest (Down+Up+Ping+Jitter) with Wi-Fi History, Graphical Menu Bar Popover, Live CoreWLAN Signal Telemetry, Outage Log + macOS Notifications, and LAN Subnet Scanner."
+  "notes": "v2.5.1 — Fixed-width 2-line stacked speed display in both macOS Menu Bar and top header (eliminates width jitter and B/s flickering)."
 }

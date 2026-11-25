@@ -275,7 +275,11 @@
             return (b / Math.pow(k, i)).toFixed(i >= 3 ? 2 : (i === 2 ? 1 : 0)) + ' ' + s[i];
         }
         function fmtSpeed(bps) {
-            return (!bps || bps < 1) ? '0 B/s' : fmtBytes(bps) + '/s';
+            if (!bps || bps < 102.4) return '0.0 KB/s';
+            if (bps >= 1024 * 1024 * 1024) return (bps / (1024 * 1024 * 1024)).toFixed(2) + ' GB/s';
+            if (bps >= 1024 * 1024) return (bps / (1024 * 1024)).toFixed(2) + ' MB/s';
+            const kb = bps / 1024;
+            return (kb >= 100 ? kb.toFixed(0) : kb.toFixed(1)) + ' KB/s';
         }
         function postNative(payload) {
             if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.netpulseNative) {

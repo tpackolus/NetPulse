@@ -794,10 +794,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         return true
     }
 
-    // MARK: - Top Menu Bar Item (Compact Smaller Typography as Requested)
+    // MARK: - Top Menu Bar Item (Fixed Width + 2-Line Stacked Speeds — Zero Jitter)
     func setupStatusBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: 72)
         if let button = statusItem.button {
+            button.imagePosition = .imageOnly
             setCompactMenuBarTitle(down: 0, up: 0, button: button)
         }
 
@@ -916,28 +917,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     private func setCompactMenuBarTitle(down: Double, up: Double, button: NSStatusBarButton) {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
-        let labelFont = NSFont.systemFont(ofSize: 8.5, weight: .semibold)
+        let downText = formatSpeedCompact(down)
+        let upText = formatSpeedCompact(up)
+        let imgSize = NSSize(width: 68, height: 22)
 
-        let attr = NSMutableAttributedString()
-        let downColor = NSColor(calibratedRed: 0.06, green: 0.72, blue: 0.50, alpha: 1.0)
-        let upColor = NSColor(calibratedRed: 0.23, green: 0.51, blue: 0.96, alpha: 1.0)
+        let img = NSImage(size: imgSize, flipped: false) { _ in
+            let numFont = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
+            let arrowFont = NSFont.systemFont(ofSize: 8.5, weight: .bold)
 
-        attr.append(NSAttributedString(string: "↓ ", attributes: [.font: labelFont, .foregroundColor: downColor]))
-        attr.append(NSAttributedString(string: "\(formatSpeedCompact(down))  ", attributes: [.font: font]))
-        attr.append(NSAttributedString(string: "↑ ", attributes: [.font: labelFont, .foregroundColor: upColor]))
-        attr.append(NSAttributedString(string: formatSpeedCompact(up), attributes: [.font: font]))
+            let downColor = NSColor(calibratedRed: 0.06, green: 0.75, blue: 0.52, alpha: 1.0)
+            let upColor = NSColor(calibratedRed: 0.25, green: 0.54, blue: 0.98, alpha: 1.0)
+            let textColor = NSColor.labelColor
 
-        button.attributedTitle = attr
+            let rightStyle = NSMutableParagraphStyle()
+            rightStyle.alignment = .right
+            rightStyle.lineBreakMode = .byClipping
+
+            // Top row: Download (↓ + right-aligned tabular value)
+            NSAttributedString(
+                string: "↓",
+                attributes: [.font: arrowFont, .foregroundColor: downColor]
+            ).draw(in: NSRect(x: 1, y: 10.5, width: 10, height: 11))
+
+            NSAttributedString(
+                string: downText,
+                attributes: [.font: numFont, .foregroundColor: textColor, .paragraphStyle: rightStyle]
+            ).draw(in: NSRect(x: 10, y: 10.5, width: 56, height: 11))
+
+            // Bottom row: Upload (↑ + right-aligned tabular value)
+            NSAttributedString(
+                string: "↑",
+                attributes: [.font: arrowFont, .foregroundColor: upColor]
+            ).draw(in: NSRect(x: 1, y: 0.5, width: 10, height: 11))
+
+            NSAttributedString(
+                string: upText,
+                attributes: [.font: numFont, .foregroundColor: textColor, .paragraphStyle: rightStyle]
+            ).draw(in: NSRect(x: 10, y: 0.5, width: 56, height: 11))
+
+            return true
+        }
+        img.isTemplate = false
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "")
+        button.image = img
     }
 
     private func formatSpeedCompact(_ bps: Double) -> String {
         if bps >= 1024 * 1024 * 1024 {
             return String(format: "%.1f GB/s", bps / (1024 * 1024 * 1024))
         } else if bps >= 1024 * 1024 {
-            return String(format: "%.1f MB/s", bps / (1024 * 1024))
-        } else if bps >= 1024 {
-            return String(format: "%.0f KB/s", bps / 1024)
+            let mb = bps / (1024 * 1024)
+            return mb >= 100 ? String(format: "%.0f MB/s", mb) : String(format: "%.1f MB/s", mb)
+        } else if bps >= 102.4 {
+            let kb = bps / 1024
+            return kb >= 10 ? String(format: "%.0f KB/s", kb) : String(format: "%.1f KB/s", kb)
         } else {
             return "0 KB/s"
         }

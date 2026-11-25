@@ -409,55 +409,61 @@ body {
 
 .rate-pill-group {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    justify-content: center;
+    width: 156px;
+    flex-shrink: 0;
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 4px 12px;
-    gap: 12px;
+    padding: 3px 10px;
+    gap: 1px;
 }
 
 .rate-pill {
     display: flex;
     align-items: center;
     gap: 6px;
-    min-width: 112px;
+    width: 100%;
+    line-height: 1.2;
 }
 
 .rate-pill-lbl {
-    font-size: 0.62rem;
+    font-size: 0.58rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     color: var(--text-muted);
+    width: 34px;
+    flex-shrink: 0;
 }
 
 .rate-pill-val {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.84rem;
+    font-size: 0.76rem;
     font-weight: 700;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
     margin-left: auto;
-}
-
-.rate-pill-divider {
-    width: 1px;
-    height: 16px;
-    background: var(--border-subtle);
+    text-align: right;
+    white-space: nowrap;
 }
 
 .ping-pill {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    width: 94px;
+    flex-shrink: 0;
     gap: 6px;
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 5px 10px;
+    padding: 6px 10px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
 }
 
 /* ==========================================================================

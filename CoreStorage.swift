@@ -98,12 +98,12 @@ struct DiagnosticsInfo: Codable {
     // LAN Scanner state
     var lan_scanning: Bool = false
     // OTA Updater
-    var app_version: String = "2.5.0"
-    var latest_version: String = "2.5.0"
+    var app_version: String = "2.5.1"
+    var latest_version: String = "2.5.1"
     var update_available: Bool = false
     var update_checking: Bool = false
     var update_installing: Bool = false
-    var update_status: String = "Up to date (v2.5.0)"
+    var update_status: String = "Up to date (v2.5.1)"
     var update_notes: String = ""
 }
 

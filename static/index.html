@@ -24,7 +24,7 @@
                         <span class="brand-name">NetPulse</span>
                         <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
                     </div>
-                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.5.0</span>
+                    <span class="brand-version" id="sidebarVersionLabel">macOS Engine v2.5.1</span>
                 </div>
             </div>
 
@@ -145,13 +145,12 @@
                         <div class="rate-pill">
                             <span class="dot-indicator down-bg"></span>
                             <span class="rate-pill-lbl">DOWN</span>
-                            <span class="rate-pill-val" id="headerSpeedIn">0 B/s</span>
+                            <span class="rate-pill-val" id="headerSpeedIn">0.0 KB/s</span>
                         </div>
-                        <div class="rate-pill-divider"></div>
                         <div class="rate-pill">
                             <span class="dot-indicator up-bg"></span>
                             <span class="rate-pill-lbl">UP</span>
-                            <span class="rate-pill-val" id="headerSpeedOut">0 B/s</span>
+                            <span class="rate-pill-val" id="headerSpeedOut">0.0 KB/s</span>
                         </div>
                     </div>
 
@@ -160,8 +159,8 @@
                         <span id="headerPingVal">— ms</span>
                     </div>
 
-                    <button class="btn btn-ghost btn-sm" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click OTA Update">
-                        <span id="topUpdateLabel">v2.5.0</span>
+                    <button class="btn btn-ghost btn-sm" id="topUpdateBtn" onclick="handleTopUpdateBtn()" title="Check for Updates &amp; 1-Click OTA Update" style="min-width:68px;">
+                        <span id="topUpdateLabel">v2.5.1</span>
                     </button>
                 </div>
             </header>
@@ -962,7 +961,7 @@
             <div class="modal-content">
                 <div class="storage-info-box" style="margin-bottom:12px;">
                     <span class="strip-label">SOFTWARE UPDATES (GITHUB OTA)</span>
-                    <code id="modalUpdateStatus">Up to date (v2.5.0)</code>
+                    <code id="modalUpdateStatus">Up to date (v2.5.1)</code>
                     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-xs" id="modalCheckUpdateBtn" onclick="checkUpdates()">Check for Updates</button>
                         <button class="btn btn-primary btn-xs" id="modalInstallUpdateBtn" onclick="installUpdate()">1-Click Update from GitHub</button>
